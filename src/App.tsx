@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Shield,
   FileText,
@@ -21,14 +21,17 @@ import {
   Plus,
   Home,
   Lock,
-  Key
+  Key,
+  Globe,
+  Navigation
 } from "lucide-react";
-import { Complaint, FieldWorker, Notification } from "./types";
+import { Complaint, FieldWorker, Notification, Rating } from "./types";
 import {
   INITIAL_COMPLAINTS,
   INITIAL_WORKERS,
   INITIAL_NOTIFICATIONS
 } from "./data/mockData";
+import { CITIES_DATA, getNationalAggregateData, CityData } from "./data/cityData";
 import CitizenApp from "./components/CitizenApp";
 import AdminDashboard from "./components/AdminDashboard";
 import FieldWorkerApp from "./components/FieldWorkerApp";
@@ -39,22 +42,102 @@ import AIChatbot from "./components/AIChatbot";
 import AIAssistantStack from "./components/AIAssistantStack";
 import OnboardingModal from "./components/OnboardingModal";
 
+import Navbar from "./components/Navbar";
+import Footer from "./components/Footer";
+
 export default function App() {
-  // Global States representing database persistence
-  const [complaints, setComplaints] = useState<Complaint[]>(() => {
-    const saved = localStorage.getItem("ciq_complaints");
-    return saved ? JSON.parse(saved) : INITIAL_COMPLAINTS;
-  });
+  // City and Location States
+  const [selectedCityKey, setSelectedCityKey] = useState<string>("all_india");
+  const [isGeoLocationActive, setIsGeoLocationActive] = useState<boolean>(false);
+  const [geoDenied, setGeoDenied] = useState<boolean>(false);
+  const [locationNameLabel, setLocationNameLabel] = useState<string>("All India Overview");
 
-  const [workers, setWorkers] = useState<FieldWorker[]>(() => {
-    const saved = localStorage.getItem("ciq_workers");
-    return saved ? JSON.parse(saved) : INITIAL_WORKERS;
-  });
+  // Derive current city dataset
+  const activeCityData: CityData = useMemo(() => {
+    if (selectedCityKey === "all_india") {
+      return getNationalAggregateData();
+    }
+    return CITIES_DATA[selectedCityKey] || getNationalAggregateData();
+  }, [selectedCityKey]);
 
-  const [notifications, setNotifications] = useState<Notification[]>(() => {
-    const saved = localStorage.getItem("ciq_notifications");
-    return saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
-  });
+  // Global States representing database persistence (synced to current active city)
+  const [complaints, setComplaints] = useState<Complaint[]>(activeCityData.complaints);
+  const [workers, setWorkers] = useState<FieldWorker[]>(activeCityData.workers);
+  const [notifications, setNotifications] = useState<Notification[]>(activeCityData.notifications);
+
+  // When city changes, update complaints, workers, and notifications smoothly
+  useEffect(() => {
+    const savedComplaints = localStorage.getItem(`ciq_complaints_${selectedCityKey}`);
+    const savedWorkers = localStorage.getItem(`ciq_workers_${selectedCityKey}`);
+    const savedNotifs = localStorage.getItem(`ciq_notifications_${selectedCityKey}`);
+
+    setComplaints(savedComplaints ? JSON.parse(savedComplaints) : activeCityData.complaints);
+    setWorkers(savedWorkers ? JSON.parse(savedWorkers) : activeCityData.workers);
+    setNotifications(savedNotifs ? JSON.parse(savedNotifs) : activeCityData.notifications);
+  }, [selectedCityKey, activeCityData]);
+
+  // Save to local storage per city
+  useEffect(() => {
+    localStorage.setItem(`ciq_complaints_${selectedCityKey}`, JSON.stringify(complaints));
+  }, [complaints, selectedCityKey]);
+
+  useEffect(() => {
+    localStorage.setItem(`ciq_workers_${selectedCityKey}`, JSON.stringify(workers));
+  }, [workers, selectedCityKey]);
+
+  useEffect(() => {
+    localStorage.setItem(`ciq_notifications_${selectedCityKey}`, JSON.stringify(notifications));
+  }, [notifications, selectedCityKey]);
+
+  // Handle automatic geolocation trigger
+  const handleTriggerGeoLocation = () => {
+    if (!navigator.geolocation) {
+      setGeoDenied(true);
+      setIsGeoLocationActive(false);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+
+        let closestKey = "mumbai";
+        let minDistance = Infinity;
+
+        Object.entries(CITIES_DATA).forEach(([key, data]) => {
+          const dLat = data.centerLat - lat;
+          const dLng = data.centerLng - lng;
+          const dist = Math.sqrt(dLat * dLat + dLng * dLng);
+          if (dist < minDistance) {
+            minDistance = dist;
+            closestKey = key;
+          }
+        });
+
+        setSelectedCityKey(closestKey);
+        setIsGeoLocationActive(true);
+        setGeoDenied(false);
+        setLocationNameLabel(`📍 Near You (${CITIES_DATA[closestKey].cityName})`);
+      },
+      (err) => {
+        console.warn("Geolocation permission error or denied:", err);
+        setGeoDenied(true);
+        setIsGeoLocationActive(false);
+      },
+      { timeout: 8000, enableHighAccuracy: true }
+    );
+  };
+
+  const handleSelectCity = (key: string) => {
+    setSelectedCityKey(key);
+    setIsGeoLocationActive(false);
+    if (key === "all_india") {
+      setLocationNameLabel("All India Overview");
+    } else {
+      setLocationNameLabel(`📍 ${CITIES_DATA[key]?.cityName || key}, ${CITIES_DATA[key]?.stateName || ""}`);
+    }
+  };
 
   // Current active viewport workspace
   // "landing" | "admin" | "citizen" | "worker" | "docs"
@@ -372,221 +455,23 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#F5F7FA] text-slate-800 antialiased font-sans flex flex-col">
       
-      {/* TOP NAVIGATION BAR - Full-width modern dark navy enterprise banner */}
-      <header className="bg-slate-950 border-b border-slate-800 text-white sticky top-0 z-45 shadow-md shrink-0 transition-all">
-        <div className="max-w-[1920px] mx-auto px-4 lg:px-6 py-3.5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          
-          {/* Brand Logo & Meta */}
-          <div className="flex items-center justify-between lg:justify-start gap-4">
-            <div 
-              className="flex items-center gap-3 cursor-pointer select-none group" 
-              onClick={() => setActiveRole("landing")}
-              id="top-nav-logo-brand"
-            >
-              <img
-                src="/src/assets/images/civiciq_logo_1783246559258.jpg"
-                alt="CIVIC-AI Logo"
-                className="w-9 h-9 rounded-full shrink-0 object-cover border border-slate-700 group-hover:border-blue-400 transition-colors"
-                referrerPolicy="no-referrer"
-              />
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-display font-black tracking-tight uppercase bg-gradient-to-r from-blue-400 to-indigo-300 bg-clip-text text-transparent">
-                    CIVIC-AI
-                  </span>
-                  <span className="text-[8px] uppercase font-mono font-extrabold text-blue-300 bg-blue-950/80 border border-blue-900/50 px-1.5 py-0.2 rounded-sm">
-                    Enterprise v2.0
-                  </span>
-                </div>
-                <p className="text-[10px] text-slate-400 font-medium">Smart City Operations Platform</p>
-              </div>
-            </div>
-
-            {/* Mobile/Tablet Controls Block */}
-            <div className="flex items-center gap-3 lg:hidden">
-              {/* Alert Bell */}
-              <div className="relative">
-                <button
-                  onClick={() => setShowNotificationCenter(!showNotificationCenter)}
-                  className="p-1.5 text-slate-300 hover:text-white relative bg-slate-900 hover:bg-slate-850 rounded-lg transition-colors border border-slate-800 cursor-pointer"
-                  id="mobile-alerts-btn"
-                >
-                  <Bell className="h-4 w-4" />
-                  {unreadCount > 0 && (
-                    <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
-                  )}
-                </button>
-              </div>
-              <button
-                onClick={handleClearPersistence}
-                className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 rounded text-[9px] uppercase font-bold tracking-wider font-mono cursor-pointer"
-              >
-                Reset Data
-              </button>
-            </div>
-          </div>
-
-          {/* Central Portal Navigation links - full width scroll on touch */}
-          <nav className="flex items-center gap-1 bg-slate-900/80 border border-slate-800 p-1 rounded-lg font-mono text-xs overflow-x-auto shrink-0 scrollbar-none max-w-full">
-            <button
-              onClick={() => setActiveRole("landing")}
-              className={`px-3 py-1.5 rounded-md font-bold transition-all shrink-0 flex items-center gap-2 cursor-pointer ${
-                (activeRole as string) === "landing"
-                  ? "bg-slate-850 text-blue-400 border border-slate-800"
-                  : "text-slate-400 hover:text-white"
-              }`}
-            >
-              <Home className="h-3.5 w-3.5 shrink-0" />
-              <span>Portal Home</span>
-            </button>
-            <button
-              onClick={() => setActiveRole("admin")}
-              className={`px-3 py-1.5 rounded-md font-bold transition-all shrink-0 flex items-center gap-2 cursor-pointer ${
-                activeRole === "admin"
-                  ? "bg-[#1565C0] text-white border border-blue-600 shadow-sm font-extrabold"
-                  : "text-slate-400 hover:text-white"
-              }`}
-            >
-              <Shield className="h-3.5 w-3.5 shrink-0" />
-              <span>1. Admin Dashboard</span>
-            </button>
-            <button
-              onClick={() => setActiveRole("citizen")}
-              className={`px-3 py-1.5 rounded-md font-bold transition-all shrink-0 flex items-center gap-2 cursor-pointer ${
-                activeRole === "citizen"
-                  ? "bg-[#1565C0] text-white border border-blue-600 shadow-sm font-extrabold"
-                  : "text-slate-400 hover:text-white"
-              }`}
-            >
-              <FileText className="h-3.5 w-3.5 shrink-0" />
-              <span>2. Citizen Portal</span>
-            </button>
-            <button
-              onClick={() => setActiveRole("worker")}
-              className={`px-3 py-1.5 rounded-md font-bold transition-all shrink-0 flex items-center gap-2 cursor-pointer ${
-                activeRole === "worker"
-                  ? "bg-[#1565C0] text-white border border-blue-600 shadow-sm font-extrabold"
-                  : "text-slate-400 hover:text-white"
-              }`}
-            >
-              <Users className="h-3.5 w-3.5 shrink-0" />
-              <span>3. Field Crew</span>
-            </button>
-            <button
-              onClick={() => setActiveRole("docs")}
-              className={`px-3 py-1.5 rounded-md font-bold transition-all shrink-0 flex items-center gap-2 cursor-pointer ${
-                activeRole === "docs"
-                  ? "bg-[#1565C0] text-white border border-blue-600 shadow-sm font-extrabold"
-                  : "text-slate-400 hover:text-white"
-              }`}
-            >
-              <HelpCircle className="h-3.5 w-3.5 shrink-0" />
-              <span>4. Design System</span>
-            </button>
-          </nav>
-
-          {/* Right Side Utility Stack - Desktop ONLY */}
-          <div className="hidden lg:flex items-center gap-4 font-mono text-xs">
-            {/* Clock */}
-            <div className="flex items-center gap-2 text-slate-400 bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-800">
-              <Clock className="h-3.5 w-3.5 text-blue-400 shrink-0" />
-              <span className="text-[11px] font-bold text-slate-300">{currentTime || "2026-07-06 02:37"}</span>
-            </div>
-
-            {/* Notification drop block button */}
-            <div className="relative">
-              <button
-                onClick={() => setShowNotificationCenter(!showNotificationCenter)}
-                className="flex items-center gap-2 bg-slate-900 hover:bg-slate-850 text-slate-300 hover:text-white px-3 py-1.5 rounded-lg transition-colors border border-slate-800 cursor-pointer"
-                title="System Alerts"
-                id="desktop-alerts-btn"
-              >
-                <Bell className="h-4 w-4 text-slate-400 shrink-0" />
-                <span className="font-bold uppercase text-[10px]">Alerts</span>
-                {unreadCount > 0 ? (
-                  <span className="px-1.5 py-0.2 bg-red-500 text-white rounded-full text-[10px] font-bold animate-pulse">
-                    {unreadCount}
-                  </span>
-                ) : (
-                  <span className="text-slate-500">•</span>
-                )}
-              </button>
-
-              {/* Notification dropdown overlay */}
-              {showNotificationCenter && (
-                <div className="absolute right-0 mt-2 w-64 bg-white border border-slate-200 text-slate-800 rounded-xl shadow-2xl z-50 p-4 space-y-3 font-sans" id="desktop-notifications-menu">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                    <span className="font-bold text-slate-900 text-xs font-mono uppercase tracking-wider">System Alerts</span>
-                    <button onClick={markAllNotifsRead} className="text-[10px] text-[#1565C0] font-bold uppercase hover:underline cursor-pointer">
-                      Mark All Read
-                    </button>
-                  </div>
-                  <div className="space-y-2.5 max-h-56 overflow-y-auto">
-                    {notifications.length === 0 ? (
-                      <p className="text-slate-400 text-xs text-center py-4 italic">No active alert logs.</p>
-                    ) : (
-                      notifications.slice(0, 5).map((n) => (
-                        <div key={n.id} className={`p-2 rounded-lg text-xs space-y-1 border ${n.read ? "bg-slate-50 border-slate-100" : "bg-blue-50/40 border-blue-100"}`}>
-                          <div className="flex justify-between font-mono text-[9px] text-slate-400">
-                            <span className="font-bold text-slate-500">{n.role.toUpperCase()}</span>
-                            <span>{new Date(n.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                          </div>
-                          <h5 className="font-bold text-slate-800 truncate leading-tight">{n.title}</h5>
-                          <p className="text-[11px] text-slate-500 line-clamp-2">{n.message}</p>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                  <button
-                    onClick={() => setShowNotificationCenter(false)}
-                    className="w-full py-1.5 text-center bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-lg text-[10px] font-bold font-mono uppercase border border-slate-200 transition-colors cursor-pointer"
-                  >
-                    Close
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Onboarding Tour launcher */}
-            <button
-              onClick={() => setShowOnboarding(true)}
-              className="px-3 py-1.5 bg-blue-950 hover:bg-blue-900 border border-blue-800 text-blue-300 font-bold rounded-lg transition-all text-center cursor-pointer font-mono text-[10px] tracking-wide flex items-center gap-1.5"
-              id="desktop-take-tour-btn"
-            >
-              <HelpCircle className="h-3.5 w-3.5 text-blue-400" />
-              <span>Take Tour</span>
-            </button>
-
-            {/* Reset button */}
-            <button
-              onClick={handleClearPersistence}
-              className="px-3 py-1.5 bg-slate-900 hover:bg-slate-850 hover:text-red-400 border border-slate-800 hover:border-red-900 text-slate-400 uppercase font-bold rounded-lg transition-all text-center cursor-pointer font-mono text-[10px] tracking-wide"
-            >
-              Reset Data
-            </button>
-          </div>
-
-        </div>
-      </header>
-
-      {/* Mobile Alert overlay panel outside top nav block */}
-      {showNotificationCenter && (
-        <div className="block lg:hidden mx-4 mt-3 bg-white border border-slate-200 rounded-xl p-4 shadow-xl z-30 space-y-3 font-sans" id="mobile-notifications-menu">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-            <span className="font-bold text-slate-800 text-xs font-mono uppercase">System Alerts Log</span>
-            <button onClick={markAllNotifsRead} className="text-[10px] text-[#1565C0] font-bold uppercase hover:underline cursor-pointer">
-              Mark Read
-            </button>
-          </div>
-          <div className="space-y-2.5 max-h-40 overflow-y-auto">
-            {notifications.slice(0, 5).map((n) => (
-              <div key={n.id} className={`p-2 rounded text-xs space-y-0.5 border ${n.read ? "bg-slate-50 border-slate-100" : "bg-blue-50/50 border-blue-100"}`}>
-                <p className="text-xs text-slate-700 leading-normal"><span className="font-bold">{n.title}</span>: {n.message}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* CLEAN MODERN NAVIGATION BAR */}
+      <Navbar
+        activeRole={activeRole}
+        setActiveRole={(role) => setActiveRole(role as any)}
+        notifications={notifications}
+        showNotificationCenter={showNotificationCenter}
+        setShowNotificationCenter={setShowNotificationCenter}
+        markAllNotifsRead={markAllNotifsRead}
+        setShowOnboarding={setShowOnboarding}
+        handleClearPersistence={handleClearPersistence}
+        selectedCityKey={selectedCityKey}
+        onSelectCity={handleSelectCity}
+        isGeoLocationActive={isGeoLocationActive}
+        locationNameLabel={locationNameLabel}
+        onTriggerGeoLocation={handleTriggerGeoLocation}
+        geoDenied={geoDenied}
+      />
 
       {/* SPLIT SCREEN VIEW - LEFT (75%) & RIGHT (25%) */}
       <div className="flex-1 max-w-[1920px] w-full mx-auto px-4 lg:px-6 py-6" id="dashboard-split-screen-grid-wrapper">
@@ -637,6 +522,9 @@ export default function App() {
                     workers={workers}
                     onAssignWorker={handleAssignWorker}
                     onUpdateStatus={handleWorkerUpdateStatus}
+                    cityName={activeCityData.cityName}
+                    selectedCityKey={selectedCityKey}
+                    cityData={activeCityData}
                   />
                 ) : (
                   <AdminLogin
@@ -851,6 +739,8 @@ export default function App() {
         {/* ONBOARDING GUIDED TOUR MODAL */}
         <OnboardingModal isOpen={showOnboarding} onClose={handleCloseOnboarding} />
 
+        {/* GOVERNMENT-STYLE FOOTER */}
+        <Footer activeRole={activeRole} setActiveRole={(role) => setActiveRole(role as any)} />
     </div>
   );
 }

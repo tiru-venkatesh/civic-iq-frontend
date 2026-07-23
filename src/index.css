@@ -39,3 +39,15 @@
   outline: 2px solid var(--color-gov-blue);
   outline-offset: 2px;
 }
+
+/* AI Sidebar Suggestion Cards & Action Chips Hover Animation & Soft Glow */
+#right-ai-sidebar-container .ai-suggestion-card,
+#right-ai-sidebar-container .ai-prompt-chip {
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.25s ease;
+}
+
+#right-ai-sidebar-container .ai-suggestion-card:hover,
+#right-ai-sidebar-container .ai-prompt-chip:hover {
+  transform: scale(1.02);
+  box-shadow: 0 8px 24px -4px rgba(21, 101, 192, 0.18), 0 2px 6px -1px rgba(0, 0, 0, 0.05);
+}

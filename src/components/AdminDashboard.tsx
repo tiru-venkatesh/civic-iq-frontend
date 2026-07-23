@@ -5,6 +5,7 @@
 
 import React, { useState } from "react";
 import InfoTooltip from "./InfoTooltip";
+import AnimatedCounter from "./AnimatedCounter";
 import {
   MapPin,
   AlertTriangle,
@@ -26,9 +27,11 @@ import {
   Info,
   Layers2,
   Navigation,
-  X
+  X,
+  Globe
 } from "lucide-react";
 import { Complaint, FieldWorker, SmartCityBudget } from "../types";
+import { CityData } from "../data/cityData";
 import SmartCityMap from "./SmartCityMap";
 import WeatherImpactMonitor, { WeatherData } from "./WeatherImpactMonitor";
 
@@ -37,6 +40,9 @@ interface AdminDashboardProps {
   workers: FieldWorker[];
   onAssignWorker: (complaintId: string, workerId: string) => void;
   onUpdateStatus: (complaintId: string, status: "In Progress" | "Resolved", comment: string, photo: string | null) => void;
+  cityName?: string;
+  selectedCityKey?: string;
+  cityData?: CityData;
 }
 
 export default function AdminDashboard({
@@ -44,6 +50,9 @@ export default function AdminDashboard({
   workers,
   onAssignWorker,
   onUpdateStatus,
+  cityName = "Mumbai",
+  selectedCityKey = "mumbai",
+  cityData,
 }: AdminDashboardProps) {
   // Navigation tabs for Admin Workspace
   // "overview" | "reports" | "workers" | "simulator"
@@ -198,18 +207,24 @@ export default function AdminDashboard({
       <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-slate-200 pb-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-gov-blue text-white flex items-center justify-center font-bold text-lg shadow-sm">
-            IQ
+            {selectedCityKey === "all_india" ? "🇮🇳" : "IQ"}
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-display font-bold text-slate-900 leading-none">Admin Dashboard</h1>
+              <h1 className="text-xl font-display font-bold text-slate-900 leading-none">
+                {selectedCityKey === "all_india"
+                  ? "All India Overview"
+                  : `${cityName} Operations Dashboard`}
+              </h1>
               <span className="text-[9px] uppercase font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded flex items-center gap-1">
                 <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full inline-block animate-pulse"></span>
-                <span>Live System</span>
+                <span>{selectedCityKey === "all_india" ? "National Aggregate Data" : `Live ${cityName} Node`}</span>
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              Manage citizen complaints, dispatch field workers, and track ward repairs in real time.
+              {selectedCityKey === "all_india"
+                ? "Aggregated municipal intelligence, complaint totals, and budget metrics across India."
+                : `Manage citizen complaints, dispatch field workers, and track ward repairs in ${cityName}.`}
             </p>
           </div>
         </div>
@@ -260,9 +275,11 @@ export default function AdminDashboard({
             <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
               <div className="text-slate-500 text-xs font-bold uppercase tracking-wider font-mono flex items-center gap-1.5">
                 <span>Total Complaints</span>
-                <InfoTooltip text="Total number of issues reported by Mumbai citizens across all BMC wards." title="Total Complaints" />
+                <InfoTooltip text={`Total number of issues reported by citizens in ${selectedCityKey === "all_india" ? "all Indian cities" : cityName}.`} title="Total Complaints" />
               </div>
-              <div className="text-3xl font-bold mt-1 text-slate-900 font-mono">{totalReports}</div>
+              <div className="text-3xl font-bold mt-1 text-slate-900 font-mono">
+                <AnimatedCounter value={totalReports} />
+              </div>
               <div className="text-slate-500 text-[10px] font-bold font-mono mt-2 flex items-center gap-1">
                 <FileText className="h-3 w-3 text-gov-blue" />
                 All citizen portals linked
@@ -274,7 +291,9 @@ export default function AdminDashboard({
                 <span>Active Pending</span>
                 <InfoTooltip text="Reports currently undergoing AI priority calculation or awaiting worker dispatch." title="Active Pending" />
               </div>
-              <div className="text-3xl font-bold mt-1 text-slate-900 font-mono">{pendingCount}</div>
+              <div className="text-3xl font-bold mt-1 text-slate-900 font-mono">
+                <AnimatedCounter value={pendingCount} />
+              </div>
               <div className="text-red-600 text-[10px] font-bold font-mono mt-2 flex items-center gap-1">
                 <AlertTriangle className="h-3 w-3 animate-pulse" />
                 Requires triage
@@ -286,10 +305,12 @@ export default function AdminDashboard({
                 <span>Resolved Total</span>
                 <InfoTooltip text="Complaints fixed by field workers with verified photo proof." title="Resolved Complaints" />
               </div>
-              <div className="text-3xl font-bold mt-1 text-slate-900 font-mono">{resolvedCount}</div>
+              <div className="text-3xl font-bold mt-1 text-slate-900 font-mono">
+                <AnimatedCounter value={resolvedCount} />
+              </div>
               <div className="text-emerald-600 text-[10px] font-bold font-mono mt-2 flex items-center gap-1">
                 <CheckCircle className="h-3 w-3" />
-                {Math.round((resolvedCount / totalReports) * 100)}% clearance rate
+                {totalReports > 0 ? Math.round((resolvedCount / totalReports) * 100) : 0}% clearance rate
               </div>
             </div>
 
@@ -299,10 +320,12 @@ export default function AdminDashboard({
                 <span>Allocated Budget</span>
                 <InfoTooltip text="Current municipal budget spent on resolved and assigned repair work orders." title="Municipal Budget" />
               </div>
-              <div className="text-3xl font-bold mt-1 font-mono">₹{spentBudget.toLocaleString()}</div>
+              <div className="text-3xl font-bold mt-1 font-mono">
+                <AnimatedCounter prefix="₹" value={spentBudget} />
+              </div>
               <div className="text-white/90 text-[10px] font-bold font-mono mt-2 flex items-center gap-1 uppercase tracking-wide">
                 <DollarSign className="h-3 w-3" />
-                Max limit: ₹{totalAllocatedBudget.toLocaleString()}
+                Max limit: ₹{(cityData?.budget?.allocated || 450000).toLocaleString()}
               </div>
             </div>
           </div>

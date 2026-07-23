@@ -1,8 +1,3 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import { Complaint, FieldWorker, Notification } from "../types";
 
 export const INITIAL_WORKERS: FieldWorker[] = [

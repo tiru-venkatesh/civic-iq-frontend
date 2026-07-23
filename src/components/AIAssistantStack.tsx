@@ -24,9 +24,37 @@ import {
   Layers,
   Mic,
   Volume2,
-  VolumeX
+  VolumeX,
+  TrendingUp,
+  Activity
 } from "lucide-react";
 import Markdown from "react-markdown";
+import { ResponsiveContainer, LineChart, Line } from "recharts";
+
+function SparklineChart({
+  data,
+  color = "#3b82f6"
+}: {
+  data: { h: string; r: number }[];
+  color?: string;
+}) {
+  return (
+    <div className="w-11 h-4.5 shrink-0 inline-block pointer-events-none opacity-90 group-hover/chip:opacity-100">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 1, right: 1, bottom: 1, left: 1 }}>
+          <Line
+            type="monotone"
+            dataKey="r"
+            stroke={color}
+            strokeWidth={1.75}
+            dot={false}
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
 
 interface Message {
   id: string;
@@ -38,25 +66,217 @@ interface Message {
 
 export type ChatMode = "assistant" | "advisor";
 
-// Starter Prompts for Mode 1: Assistant (Citizens & General Support)
-const ASSISTANT_STARTER_PROMPTS = [
-  { label: "📘 Platform Guide", text: "How to Use Civic-IQ (Complete Guide)" },
-  { label: "📸 Report an Issue", text: "How do I submit a new complaint on this platform?" },
-  { label: "📍 Track Complaint", text: "How can I track the status of my reported civic issue?" },
-  { label: "🗺 Explain Map", text: "Can you explain how to use the interactive city map?" },
-  { label: "🤖 AI Features", text: "What AI features does Civic-IQ use to process complaints?" },
-  { label: "🌐 Change Language", text: "How do I switch the application language between English and Hindi?" },
-  { label: "☎ Contact Support", text: "How can I contact BMC civic support or emergency helplines?" }
+// Categorized Starter Prompts for Mode 1: Assistant (Citizens & General Support)
+const ASSISTANT_CATEGORIZED_PROMPTS = [
+  {
+    category: "Suggested",
+    color: "bg-blue-500",
+    prompts: [
+      {
+        label: "📘 Platform Guide",
+        text: "How to Use Civic-IQ (Complete Guide)",
+        riskScore: 35,
+        strokeColor: "#3b82f6",
+        riskData: [
+          { h: "0h", r: 10 },
+          { h: "6h", r: 18 },
+          { h: "12h", r: 25 },
+          { h: "18h", r: 30 },
+          { h: "24h", r: 35 },
+        ],
+      },
+      {
+        label: "📸 Report an Issue",
+        text: "How do I submit a new complaint on this platform?",
+        riskScore: 82,
+        strokeColor: "#3b82f6",
+        riskData: [
+          { h: "0h", r: 20 },
+          { h: "6h", r: 35 },
+          { h: "12h", r: 55 },
+          { h: "18h", r: 70 },
+          { h: "24h", r: 82 },
+        ],
+      },
+      {
+        label: "📍 Track Complaint",
+        text: "How can I track the status of my reported civic issue?",
+        riskScore: 68,
+        strokeColor: "#3b82f6",
+        riskData: [
+          { h: "0h", r: 15 },
+          { h: "6h", r: 28 },
+          { h: "12h", r: 42 },
+          { h: "18h", r: 58 },
+          { h: "24h", r: 68 },
+        ],
+      },
+    ],
+  },
+  {
+    category: "Priority",
+    color: "bg-red-500",
+    prompts: [
+      {
+        label: "☎ Contact Support",
+        text: "How can I contact BMC civic support or emergency helplines?",
+        riskScore: 98,
+        strokeColor: "#ef4444",
+        riskData: [
+          { h: "0h", r: 45 },
+          { h: "6h", r: 65 },
+          { h: "12h", r: 80 },
+          { h: "18h", r: 92 },
+          { h: "24h", r: 98 },
+        ],
+      },
+      {
+        label: "🤖 AI Features",
+        text: "What AI features does Civic-IQ use to process complaints?",
+        riskScore: 60,
+        strokeColor: "#ef4444",
+        riskData: [
+          { h: "0h", r: 12 },
+          { h: "6h", r: 25 },
+          { h: "12h", r: 40 },
+          { h: "18h", r: 52 },
+          { h: "24h", r: 60 },
+        ],
+      },
+    ],
+  },
+  {
+    category: "Recent",
+    color: "bg-emerald-500",
+    prompts: [
+      {
+        label: "🗺 Explain Map",
+        text: "Can you explain how to use the interactive city map?",
+        riskScore: 28,
+        strokeColor: "#10b981",
+        riskData: [
+          { h: "0h", r: 8 },
+          { h: "6h", r: 14 },
+          { h: "12h", r: 20 },
+          { h: "18h", r: 25 },
+          { h: "24h", r: 28 },
+        ],
+      },
+      {
+        label: "🌐 Change Language",
+        text: "How do I switch the application language between English and Hindi?",
+        riskScore: 18,
+        strokeColor: "#10b981",
+        riskData: [
+          { h: "0h", r: 5 },
+          { h: "6h", r: 8 },
+          { h: "12h", r: 12 },
+          { h: "18h", r: 15 },
+          { h: "24h", r: 18 },
+        ],
+      },
+    ],
+  },
 ];
 
-// Starter Prompts for Mode 2: AI Advisor (Government Officers & Triage)
-const ADVISOR_STARTER_PROMPTS = [
-  { label: "Why is Issue Critical?", text: "Why is the Broadway sinkhole complaint marked as Critical?" },
-  { label: "How Priority Works", text: "Explain the mathematical formula used to calculate Priority Scores." },
-  { label: "How Duplicates Merge", text: "How does AI detect and merge duplicate complaints in the same area?" },
-  { label: "How Crew Assignment Works", text: "How does AI select which field worker or technician to assign?" },
-  { label: "How Weather Affects Priority", text: "How does severe weather affect complaint priority scores?" },
-  { label: "Explain AI Reasoning", text: "Can you provide the detailed AI reasoning behind the triage scores?" }
+// Categorized Starter Prompts for Mode 2: AI Advisor (Government Officers & Triage)
+const ADVISOR_CATEGORIZED_PROMPTS = [
+  {
+    category: "Priority",
+    color: "bg-red-500",
+    prompts: [
+      {
+        label: "Why is Issue Critical?",
+        text: "Why is the Broadway sinkhole complaint marked as Critical?",
+        riskScore: 99,
+        strokeColor: "#ef4444",
+        riskData: [
+          { h: "0h", r: 50 },
+          { h: "6h", r: 72 },
+          { h: "12h", r: 88 },
+          { h: "18h", r: 95 },
+          { h: "24h", r: 99 },
+        ],
+      },
+      {
+        label: "How Weather Affects Priority",
+        text: "How does severe weather affect complaint priority scores?",
+        riskScore: 94,
+        strokeColor: "#ef4444",
+        riskData: [
+          { h: "0h", r: 40 },
+          { h: "6h", r: 60 },
+          { h: "12h", r: 78 },
+          { h: "18h", r: 89 },
+          { h: "24h", r: 94 },
+        ],
+      },
+    ],
+  },
+  {
+    category: "Suggested",
+    color: "bg-blue-500",
+    prompts: [
+      {
+        label: "How Priority Works",
+        text: "Explain the mathematical formula used to calculate Priority Scores.",
+        riskScore: 76,
+        strokeColor: "#3b82f6",
+        riskData: [
+          { h: "0h", r: 22 },
+          { h: "6h", r: 35 },
+          { h: "12h", r: 52 },
+          { h: "18h", r: 68 },
+          { h: "24h", r: 76 },
+        ],
+      },
+      {
+        label: "Explain AI Reasoning",
+        text: "Can you provide the detailed AI reasoning behind the triage scores?",
+        riskScore: 65,
+        strokeColor: "#3b82f6",
+        riskData: [
+          { h: "0h", r: 18 },
+          { h: "6h", r: 30 },
+          { h: "12h", r: 45 },
+          { h: "18h", r: 58 },
+          { h: "24h", r: 65 },
+        ],
+      },
+    ],
+  },
+  {
+    category: "Recent",
+    color: "bg-emerald-500",
+    prompts: [
+      {
+        label: "How Duplicates Merge",
+        text: "How does AI detect and merge duplicate complaints in the same area?",
+        riskScore: 42,
+        strokeColor: "#10b981",
+        riskData: [
+          { h: "0h", r: 10 },
+          { h: "6h", r: 18 },
+          { h: "12h", r: 28 },
+          { h: "18h", r: 35 },
+          { h: "24h", r: 42 },
+        ],
+      },
+      {
+        label: "How Crew Assignment Works",
+        text: "How does AI select which field worker or technician to assign?",
+        riskScore: 55,
+        strokeColor: "#10b981",
+        riskData: [
+          { h: "0h", r: 15 },
+          { h: "6h", r: 25 },
+          { h: "12h", r: 38 },
+          { h: "18h", r: 48 },
+          { h: "24h", r: 55 },
+        ],
+      },
+    ],
+  },
 ];
 
 const CIVIC_IQ_GUIDE_TEXT = `### 📘 How to Use Civic-IQ (Complete Guide)
@@ -122,6 +342,21 @@ export default function AIAssistantStack() {
 
   // Copied text tooltip state
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Dismissed AI Suggestion cards state
+  const [dismissedSuggestions, setDismissedSuggestions] = useState<Set<string>>(new Set());
+
+  const handleDismissSuggestion = (id: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    setDismissedSuggestions((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  };
 
   // Auto-scroll ref
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -497,20 +732,50 @@ export default function AIAssistantStack() {
       <div className="flex-1 overflow-y-auto p-3.5 space-y-3.5 bg-slate-50/30 min-h-[320px] max-h-[460px]">
         
         {/* Permanent Quick Action: How to Use Civic-IQ (in Assistant mode) */}
-        {activeMode === "assistant" && (
-          <div className="bg-blue-50/80 border border-blue-200/80 rounded-xl p-3 space-y-2">
+        {!dismissedSuggestions.has("guide") && activeMode === "assistant" && (
+          <div className="bg-blue-50/80 border border-blue-200/80 rounded-xl p-3 space-y-2 ai-suggestion-card transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:shadow-blue-500/15 hover:border-blue-300 relative group/guide">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-gov-blue flex items-center gap-1.5">
                 <BookOpen className="h-3.5 w-3.5" />
                 <span>📘 How to Use Civic-IQ</span>
               </span>
-              <span className="text-[9px] font-mono text-blue-600 uppercase font-bold bg-white px-1.5 py-0.5 rounded border border-blue-200">
-                Guide
-              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[9px] font-mono text-blue-600 uppercase font-bold bg-white px-1.5 py-0.5 rounded border border-blue-200">
+                  Guide
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => handleDismissSuggestion("guide", e)}
+                  className="p-1 text-slate-400 hover:text-slate-700 hover:bg-blue-100 rounded-lg transition-colors cursor-pointer"
+                  title="Dismiss guide"
+                  aria-label="Dismiss guide card"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
             <p className="text-[11px] text-slate-600 leading-snug">
               New to Civic-IQ? Click below to view a complete step-by-step walkthrough of all portals and AI features.
             </p>
+
+            {/* Predictive Risk Sparkline Bar */}
+            <div className="flex items-center justify-between bg-white/90 px-2.5 py-1 rounded-lg border border-blue-100 shadow-2xs">
+              <div className="flex items-center gap-1 text-[9.5px]">
+                <TrendingUp className="h-3 w-3 text-blue-600 shrink-0" />
+                <span className="font-mono text-[9px] font-semibold text-slate-700">Predictive Risk: 75% ↑</span>
+              </div>
+              <SparklineChart
+                data={[
+                  { h: "0h", r: 15 },
+                  { h: "6h", r: 28 },
+                  { h: "12h", r: 48 },
+                  { h: "18h", r: 62 },
+                  { h: "24h", r: 75 },
+                ]}
+                color="#2563eb"
+              />
+            </div>
+
             <button
               onClick={() => handleSendAssist("How to Use Civic-IQ (Complete Guide)")}
               className="w-full py-1.5 px-3 bg-gov-blue hover:bg-gov-blue-hover text-white text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1 cursor-pointer shadow-2xs"
@@ -625,28 +890,77 @@ export default function AIAssistantStack() {
           </button>
         </form>
 
-        {/* Interactive Action Chips under Chat Input */}
-        <div>
-          <div className="text-[9px] font-mono uppercase text-slate-400 font-bold mb-1 px-0.5 flex items-center justify-between">
-            <span>{activeMode === "assistant" ? "Common Actions:" : "Officer Queries:"}</span>
-          </div>
-          <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-thin scrollbar-thumb-slate-300">
-            {(activeMode === "assistant" ? ASSISTANT_STARTER_PROMPTS : ADVISOR_STARTER_PROMPTS).map((prompt, idx) => (
-              <button
-                key={idx}
-                type="button"
-                onClick={() => activeMode === "assistant" ? handleSendAssist(prompt.text) : handleSendAdvisor(prompt.text)}
-                className={`text-[10px] whitespace-nowrap px-2.5 py-1 rounded-lg transition-all font-medium border cursor-pointer ${
-                  activeMode === "assistant"
-                    ? "bg-slate-50 text-gov-blue border-gov-blue/20 hover:bg-gov-blue hover:text-white hover:border-gov-blue"
-                    : "bg-slate-50 text-amber-800 border-amber-300/60 hover:bg-amber-700 hover:text-white hover:border-amber-700"
-                }`}
-              >
-                {prompt.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        {/* Categorized AI Suggestion Cards & Action Chips */}
+        {(() => {
+          const activeGroups = (activeMode === "assistant" ? ASSISTANT_CATEGORIZED_PROMPTS : ADVISOR_CATEGORIZED_PROMPTS)
+            .map((group) => ({
+              ...group,
+              prompts: group.prompts.filter(
+                (prompt) => !dismissedSuggestions.has(`${activeMode}-${prompt.label}`)
+              ),
+            }))
+            .filter((group) => group.prompts.length > 0);
+
+          if (activeGroups.length === 0) return null;
+
+          return (
+            <div className="space-y-2 pt-1 border-t border-slate-100/80">
+              {activeGroups.map((group, groupIdx) => (
+                <div key={groupIdx} className="space-y-1">
+                  <div className="flex items-center gap-1.5 text-[9px] font-mono font-bold uppercase tracking-wider text-slate-400 px-0.5">
+                    <span className={`w-1.5 h-1.5 rounded-full ${group.color} shrink-0`} />
+                    <span>{group.category}</span>
+                    <span className="ml-0.5 px-1.5 py-0.2 bg-slate-200/70 text-slate-600 rounded-full text-[8.5px] font-semibold border border-slate-300/40 font-mono">
+                      {group.prompts.length}
+                    </span>
+                  </div>
+                  <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-thin scrollbar-thumb-slate-300">
+                    {group.prompts.map((prompt, pIdx) => {
+                      const keyId = `${activeMode}-${prompt.label}`;
+                      return (
+                        <div
+                          key={pIdx}
+                          className={`inline-flex items-center gap-1.5 text-[10px] whitespace-nowrap px-2.5 py-1 rounded-lg transition-all duration-300 font-medium border ai-suggestion-card ai-prompt-chip group/chip ${
+                            activeMode === "assistant"
+                              ? "bg-slate-50 text-gov-blue border-gov-blue/20 hover:bg-gov-blue hover:text-white hover:border-gov-blue hover:shadow-md hover:shadow-blue-500/20"
+                              : "bg-slate-50 text-amber-800 border-amber-300/60 hover:bg-amber-700 hover:text-white hover:border-amber-700 hover:shadow-md hover:shadow-amber-500/20"
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() =>
+                              activeMode === "assistant"
+                                ? handleSendAssist(prompt.text)
+                                : handleSendAdvisor(prompt.text)
+                            }
+                            className="inline-flex items-center gap-1.5 cursor-pointer focus:outline-hidden"
+                          >
+                            <span>{prompt.label}</span>
+                            <div className="inline-flex items-center gap-1 bg-white/80 group-hover/chip:bg-white/20 px-1.5 py-0.5 rounded border border-slate-200/60 group-hover/chip:border-white/30 text-[9px]">
+                              <SparklineChart data={prompt.riskData} color={prompt.strokeColor} />
+                              <span className="font-mono text-[8.5px] font-semibold text-slate-600 group-hover/chip:text-white">
+                                Risk {prompt.riskScore}%
+                              </span>
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => handleDismissSuggestion(keyId, e)}
+                            className="p-0.5 rounded hover:bg-black/20 transition-colors cursor-pointer text-slate-400 group-hover/chip:text-white/80 hover:!text-white focus:outline-hidden ml-0.5 shrink-0"
+                            title="Dismiss suggestion"
+                            aria-label={`Dismiss ${prompt.label}`}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

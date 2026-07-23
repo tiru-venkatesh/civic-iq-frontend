@@ -1475,48 +1475,67 @@ export default function CitizenApp({
                         </span>
                         <div>
                           <h6 className="text-xs font-bold text-slate-900">1. Complaint Submitted</h6>
-                          <p className="text-[11px] text-slate-500">Report logged into BMC Municipal Central System.</p>
+                          <p className="text-[11px] text-slate-500">Report logged into Municipal Central Registry.</p>
                           <span className="text-[10px] text-slate-400 font-mono mt-0.5 block">
                             {new Date(selectedTrackingComplaint.reportedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </span>
                         </div>
                       </div>
 
-                      {/* Step 2: AI Automated Triage */}
+                      {/* Step 2: AI Review */}
                       <div className="relative">
                         <span className="absolute -left-[31px] top-0 w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs font-bold shadow">
                           ✓
                         </span>
                         <div>
-                          <h6 className="text-xs font-bold text-slate-900">2. AI Automated Triage & Priority Score</h6>
+                          <h6 className="text-xs font-bold text-slate-900">2. AI Review & Automated Triage</h6>
                           <p className="text-[11px] text-slate-500">
                             Pre-classified Severity: <strong className="text-gov-blue">{selectedTrackingComplaint.aiAnalysis?.severity || "High"}</strong> ({selectedTrackingComplaint.aiAnalysis?.priorityScore || 88}/100 Score).
                           </p>
                         </div>
                       </div>
 
-                      {/* Step 3: Pending / Accepted by Worker */}
+                      {/* Step 3: Waiting for Worker */}
                       <div className="relative">
                         <span className={`absolute -left-[31px] top-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shadow ${
-                          ["Accepted", "In Progress", "Resolved"].includes(selectedTrackingComplaint.status)
+                          selectedTrackingComplaint.assignedWorkerId || ["Accepted", "In Progress", "Resolved"].includes(selectedTrackingComplaint.status)
                             ? "bg-emerald-500 text-white"
-                            : "bg-blue-500 text-white animate-pulse"
+                            : "bg-amber-500 text-white animate-pulse"
                         }`}>
-                          {["Accepted", "In Progress", "Resolved"].includes(selectedTrackingComplaint.status) ? "✓" : "3"}
+                          {selectedTrackingComplaint.assignedWorkerId || ["Accepted", "In Progress", "Resolved"].includes(selectedTrackingComplaint.status) ? "✓" : "3"}
                         </span>
                         <div>
-                          <h6 className="text-xs font-bold text-slate-900">
-                            3. {selectedTrackingComplaint.assignedWorkerName || "Rahul Patil"} Accepted Work Order
-                          </h6>
+                          <h6 className="text-xs font-bold text-slate-900">3. Waiting for Field Worker Assignment</h6>
                           <p className="text-[11px] text-slate-500">
-                            {["Accepted", "In Progress", "Resolved"].includes(selectedTrackingComplaint.status)
-                              ? `${selectedTrackingComplaint.assignedWorkerName || "Rahul Patil"} accepted job assignment from Field Queue.`
-                              : "Queued in Pending Assignment board for available field engineers."}
+                            {selectedTrackingComplaint.assignedWorkerId || ["Accepted", "In Progress", "Resolved"].includes(selectedTrackingComplaint.status)
+                              ? "Dispatched to regional field operations squad."
+                              : "Queued in Available Jobs board for nearby field engineers."}
                           </p>
                         </div>
                       </div>
 
-                      {/* Step 4: Worker En Route */}
+                      {/* Step 4: Worker Accepted */}
+                      <div className={`relative ${["Accepted", "In Progress", "Resolved"].includes(selectedTrackingComplaint.status) ? "" : "opacity-50"}`}>
+                        <span className={`absolute -left-[31px] top-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shadow ${
+                          ["Accepted", "In Progress", "Resolved"].includes(selectedTrackingComplaint.status)
+                            ? "bg-emerald-500 text-white"
+                            : "bg-slate-200 text-slate-600"
+                        }`}>
+                          {["Accepted", "In Progress", "Resolved"].includes(selectedTrackingComplaint.status) ? "✓" : "4"}
+                        </span>
+                        <div>
+                          <h6 className="text-xs font-bold text-slate-900">
+                            4. Worker Accepted ({selectedTrackingComplaint.assignedWorkerName || "Technician"})
+                          </h6>
+                          <p className="text-[11px] text-slate-500">
+                            {["Accepted", "In Progress", "Resolved"].includes(selectedTrackingComplaint.status)
+                              ? `${selectedTrackingComplaint.assignedWorkerName || "Rahul Patil"} accepted work order.`
+                              : "Awaiting field crew acceptance."}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Step 5: Worker On The Way */}
                       <div className={`relative ${["Accepted", "In Progress", "Resolved"].includes(selectedTrackingComplaint.status) ? "" : "opacity-50"}`}>
                         <span className={`absolute -left-[31px] top-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shadow ${
                           ["In Progress", "Resolved"].includes(selectedTrackingComplaint.status)
@@ -1525,21 +1544,21 @@ export default function CitizenApp({
                             ? "bg-blue-500 text-white animate-pulse"
                             : "bg-slate-200 text-slate-600"
                         }`}>
-                          {["In Progress", "Resolved"].includes(selectedTrackingComplaint.status) ? "✓" : "4"}
+                          {["In Progress", "Resolved"].includes(selectedTrackingComplaint.status) ? "✓" : "5"}
                         </span>
                         <div>
-                          <h6 className="text-xs font-bold text-slate-900">4. GPS Telemetry & Technician En Route</h6>
+                          <h6 className="text-xs font-bold text-slate-900">5. Worker On The Way (En Route GPS)</h6>
                           <p className="text-[11px] text-slate-500">
                             {selectedTrackingComplaint.status === "Accepted"
-                              ? `Live ETA: ~12 minutes in traffic. Field crew navigating to site.`
+                              ? `Live GPS Navigation active (~12 mins ETA). Crew en route to location.`
                               : ["In Progress", "Resolved"].includes(selectedTrackingComplaint.status)
-                              ? "Field crew arrived on location."
-                              : "Awaiting worker dispatch."}
+                              ? "Field crew arrived at location."
+                              : "Pending crew departure."}
                           </p>
                         </div>
                       </div>
 
-                      {/* Step 5: Repair In Progress */}
+                      {/* Step 6: Work Started */}
                       <div className={`relative ${["In Progress", "Resolved"].includes(selectedTrackingComplaint.status) ? "" : "opacity-50"}`}>
                         <span className={`absolute -left-[31px] top-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shadow ${
                           selectedTrackingComplaint.status === "Resolved"
@@ -1548,33 +1567,52 @@ export default function CitizenApp({
                             ? "bg-amber-500 text-white animate-pulse"
                             : "bg-slate-200 text-slate-600"
                         }`}>
-                          {selectedTrackingComplaint.status === "Resolved" ? "✓" : "5"}
+                          {selectedTrackingComplaint.status === "Resolved" ? "✓" : "6"}
                         </span>
                         <div>
-                          <h6 className="text-xs font-bold text-slate-900">5. On-Site Physical Repair Work</h6>
+                          <h6 className="text-xs font-bold text-slate-900">6. Work Started / Repair In Progress</h6>
                           <p className="text-[11px] text-slate-500">
                             {selectedTrackingComplaint.status === "In Progress"
-                              ? "Infrastructure repairs actively underway on site."
+                              ? "Active physical repair work underway by technician crew on site."
                               : selectedTrackingComplaint.status === "Resolved"
-                              ? "Repair work completed and tested."
-                              : "Work pending crew arrival."}
+                              ? "Physical repairs completed."
+                              : "Pending physical work start."}
                           </p>
                         </div>
                       </div>
 
-                      {/* Step 6: Resolved & Verified */}
+                      {/* Step 7: Completed */}
                       <div className={`relative ${selectedTrackingComplaint.status === "Resolved" ? "" : "opacity-50"}`}>
                         <span className={`absolute -left-[31px] top-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shadow ${
                           selectedTrackingComplaint.status === "Resolved" ? "bg-emerald-500 text-white" : "bg-slate-200 text-slate-600"
                         }`}>
-                          {selectedTrackingComplaint.status === "Resolved" ? "✓" : "6"}
+                          {selectedTrackingComplaint.status === "Resolved" ? "✓" : "7"}
                         </span>
                         <div>
-                          <h6 className="text-xs font-bold text-slate-900">6. Completed & Photo Verification</h6>
+                          <h6 className="text-xs font-bold text-slate-900">7. Completed & Photo Verification</h6>
                           <p className="text-[11px] text-slate-500">
                             {selectedTrackingComplaint.status === "Resolved"
-                              ? "Before/After proof photos uploaded to municipal registry."
-                              : "Photo verification pending repair."}
+                              ? "Before and after completion proof photos uploaded to municipal registry."
+                              : "Awaiting repair completion proof."}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Step 8: Rate Service */}
+                      <div className={`relative ${selectedTrackingComplaint.status === "Resolved" ? "" : "opacity-50"}`}>
+                        <span className={`absolute -left-[31px] top-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shadow ${
+                          selectedTrackingComplaint.rating ? "bg-amber-500 text-white" : selectedTrackingComplaint.status === "Resolved" ? "bg-blue-500 text-white animate-pulse" : "bg-slate-200 text-slate-600"
+                        }`}>
+                          {selectedTrackingComplaint.rating ? "★" : "8"}
+                        </span>
+                        <div>
+                          <h6 className="text-xs font-bold text-slate-900">8. Rate Service & Citizen Feedback</h6>
+                          <p className="text-[11px] text-slate-500">
+                            {selectedTrackingComplaint.rating
+                              ? `Rated ${selectedTrackingComplaint.rating.stars} Stars: "${selectedTrackingComplaint.rating.comment || "Great service"}"`
+                              : selectedTrackingComplaint.status === "Resolved"
+                              ? "Please submit your rating and feedback below!"
+                              : "Available once work is completed."}
                           </p>
                         </div>
                       </div>
