@@ -62,17 +62,6 @@ export default function AIAssistantStack() {
   // Copied text tooltip state
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Auto-scroll ref — scrolls the chat viewport div directly (scrollTop),
-  // instead of scrollIntoView, which was hijacking the whole page/body scroll
-  // whenever this sidebar-embedded chat received a new message.
-  const chatContainerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const container = chatContainerRef.current;
-    if (container) {
-      container.scrollTop = container.scrollHeight;
-    }
-  }, [assistMessages, advisorMessages, assistLoading, advisorLoading, activeMode]);
 
   // Voice Output (Text-to-Speech)
   const speakText = (text: string) => {
@@ -413,8 +402,7 @@ export default function AIAssistantStack() {
       </div>
 
       {/* 2. Chat Messages Viewport */}
-      <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-3.5 space-y-3.5 bg-slate-50/30 min-h-[320px] max-h-[460px]">
-        {currentMessages.map((msg) => (
+        <div className="flex-1 overflow-y-auto p-3.5 space-y-3.5 bg-slate-50/30 min-h-[320px] max-h-[460px]">        {currentMessages.map((msg) => (
           <div
             key={msg.id}
             className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} animate-fade-in`}
