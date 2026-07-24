@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import logo from "../assets/1.jpg"; // add this line
 import React, { useState } from "react";
 import {
   Shield,
@@ -44,11 +45,10 @@ export default function Footer({ activeRole, setActiveRole }: FooterProps) {
           <div className="lg:col-span-4 space-y-4">
             <div className="flex items-center gap-3">
               <img
-                src="/src/assets/images/civiciq_logo_1783246559258.jpg"
-                alt="Civic-IQ Logo"
-                className="w-9 h-9 rounded-xl object-cover border border-slate-200 shadow-2xs"
-                referrerPolicy="no-referrer"
-              />
+  src={logo}
+  alt="Civic-IQ Logo"
+  className="w-9 h-9 rounded-xl object-cover border border-slate-200 shadow-2xs"
+/>
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-base font-bold text-slate-900 tracking-tight">
