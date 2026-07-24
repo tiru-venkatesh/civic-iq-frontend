@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-
+import logo from "./1.jpg"; // add this line
 import React, { useState, useRef, useEffect } from "react";
 import {
   Shield,
@@ -166,7 +166,7 @@ export default function Navbar({
             id="top-nav-logo-brand"
           >
             <img
-              src="/src/assets/images/civiciq_logo_1783246559258.jpg"
+              src={logo}
               alt="Civic-IQ Logo"
               className="w-7 h-7 rounded-lg object-cover border border-slate-700/80 group-hover:border-blue-400/80 transition-colors"
               referrerPolicy="no-referrer"
