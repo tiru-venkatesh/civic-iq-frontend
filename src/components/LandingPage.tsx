@@ -161,21 +161,6 @@ export default function LandingPage({ onSelectRole }: LandingPageProps) {
               </button>
             </div>
 
-            {/* System Live Metrics Preview */}
-            <div className="pt-6 grid grid-cols-3 gap-6 border-t border-slate-100 max-w-lg font-mono">
-              <div>
-                <span className="text-xs text-slate-400 font-bold block uppercase">Uptime Ratio</span>
-                <span className="text-lg font-bold text-emerald-600">100.0% SLA</span>
-              </div>
-              <div>
-                <span className="text-xs text-slate-400 font-bold block uppercase">Active Crews</span>
-                <span className="text-lg font-bold text-slate-800">4 Crews Live</span>
-              </div>
-              <div>
-                <span className="text-xs text-slate-400 font-bold block uppercase">Triage Model</span>
-                <span className="text-lg font-bold text-[#1565C0]">GovLLM-v2</span>
-              </div>
-            </div>
 
           </div>
 
