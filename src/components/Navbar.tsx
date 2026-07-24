@@ -1,9 +1,9 @@
 /**
  * @license
+ 
  * SPDX-License-Identifier: Apache-2.0
  */
-import logo from "./1.jpg"; // add this line
-import React, { useState, useRef, useEffect } from "react";
+import logo from "../assets/1.jpg";import React, { useState, useRef, useEffect } from "react";
 import {
   Shield,
   FileText,
