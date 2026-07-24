@@ -25,7 +25,7 @@ import {
   ChevronRight,
   Workflow
 } from "lucide-react";
-import AIChatbot from "./AIChatbot";
+import logo from "../assets/1.jpg"; // <-- adjust this path if your logo file lives elsewhere
 
 interface LandingPageProps {
   onSelectRole: (role: "admin" | "citizen" | "worker" | "docs") => void;
@@ -51,10 +51,9 @@ export default function LandingPage({ onSelectRole }: LandingPageProps) {
           {/* Logo & Platform Name */}
           <div className="flex items-center gap-3 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
             <img
-              src="/src/assets/images/civiciq_logo_1783246559258.jpg"
+              src={logo}
               alt="CIVIC-AI Logo"
               className="w-9 h-9 rounded-full object-cover border border-slate-200 shrink-0"
-              referrerPolicy="no-referrer"
             />
             <div>
               <div className="flex items-center gap-2">
@@ -164,9 +163,15 @@ export default function LandingPage({ onSelectRole }: LandingPageProps) {
 
           </div>
 
-          {/* Hero Premium Civic Map Visual Graphic replaced with Embedded Chatbot */}
-          <div className="lg:col-span-5 w-full">
-            <AIChatbot mode="embedded" />
+          {/* Hero Visual — Large Logo (chatbot removed from here) */}
+          <div className="lg:col-span-5 w-full flex items-center justify-center">
+            <div className="w-full aspect-square max-w-md bg-blue-50/50 border border-blue-100 rounded-3xl flex items-center justify-center p-10 shadow-sm">
+              <img
+                src={logo}
+                alt="CIVIC-AI Logo"
+                className="w-full h-full object-contain drop-shadow-md"
+              />
+            </div>
           </div>
 
         </div>
@@ -590,10 +595,9 @@ export default function LandingPage({ onSelectRole }: LandingPageProps) {
           <div className="space-y-4">
             <div className="flex items-center gap-3">
               <img
-                src="/src/assets/images/civiciq_logo_1783246559258.jpg"
+                src={logo}
                 alt="CivicIQ Logo"
                 className="w-10 h-10 rounded-full object-cover border border-slate-200 shrink-0"
-                referrerPolicy="no-referrer"
               />
               <div>
                 <span className="text-base font-bold text-[#1565C0] tracking-tight block">CivicIQ</span>
