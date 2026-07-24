@@ -9,10 +9,8 @@ import {
   MessageSquare,
   X,
   Send,
-  Sparkles,
   Bot,
-  ShieldAlert,
-  ArrowRight
+  ShieldAlert
 } from "lucide-react";
 import Markdown from "react-markdown";
 
@@ -29,25 +27,6 @@ interface AIChatbotProps {
   activeRole?: "landing" | "admin" | "citizen" | "worker" | "docs";
 }
 
-const STARTER_PROMPTS = [
-  {
-    label: "How does CIVIC-AI handle duplicates?",
-    text: "How does CIVIC-AI automatically detect and handle duplicate complaints?"
-  },
-  {
-    label: "Check status of Broadway sinkhole (CIQ-2026-001)",
-    text: "Can you give me the active status, assigned crew, and priority score details for report CIQ-2026-001?"
-  },
-  {
-    label: "Who is on the active field crew roster?",
-    text: "Who are the available field technicians in the roster right now and what are their specialties?"
-  },
-  {
-    label: "What is GovLLM?",
-    text: "Can you explain what the GovLLM priority triage model does in the CIVIC-AI ecosystem?"
-  }
-];
-
 export default function AIChatbot({ mode = "floating", activeRole = "landing" }: AIChatbotProps) {
   const [isOpen, setIsOpen] = useState(mode === "embedded");
   const [messages, setMessages] = useState<Message[]>([
@@ -61,7 +40,7 @@ export default function AIChatbot({ mode = "floating", activeRole = "landing" }:
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [scrollY, setScrollY] = useState(0);
-  
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom of chat
@@ -102,13 +81,15 @@ export default function AIChatbot({ mode = "floating", activeRole = "landing" }:
 
     try {
       const chatHistory = messages
-        .slice(-4)
+        .slice(-6)
         .filter((m) => m.id !== "welcome" && !m.isError)
         .map((m) => ({
           role: m.role,
           content: m.content
         }));
 
+      // Calls our backend route, which talks to Groq's chat completions API.
+      // See /api/chat (route.ts) for the Groq SDK integration.
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: {
@@ -125,7 +106,7 @@ export default function AIChatbot({ mode = "floating", activeRole = "landing" }:
       }
 
       const data = await response.json();
-      
+
       const assistantMessage: Message = {
         id: `msg-ai-${Date.now()}`,
         role: "assistant",
@@ -135,8 +116,8 @@ export default function AIChatbot({ mode = "floating", activeRole = "landing" }:
 
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (error: any) {
-      console.warn("Could not retrieve live Gemini response. Switching to rule-based fallback assistant.", error);
-      
+      console.warn("Could not retrieve live Groq response. Switching to rule-based fallback assistant.", error);
+
       let fallbackText = "I'm currently running in emergency backup mode due to network status, but I can help you with system guidelines:\n\n";
       const query = textToSend.toLowerCase();
 
@@ -152,7 +133,7 @@ export default function AIChatbot({ mode = "floating", activeRole = "landing" }:
         fallbackText += "• **General Inquiries**: CIVIC-AI is a secure decision platform linking Citizens, Administrators, and Field Crews together. You can log complaints via the **Citizen App**, monitor dispatches from the **Admin Dashboard**, and perform repairs in the **Field Crew App**.";
       }
 
-      fallbackText += "\n\n*Note: To enable active live AI responses, please verify that your GEMINI_API_KEY is configured in the AI Studio Secrets panel.*";
+      fallbackText += "\n\n*Note: To enable live AI responses, please verify that your GROQ_API_KEY is configured on the server.*";
 
       const fallbackMsg: Message = {
         id: `msg-fallback-${Date.now()}`,
@@ -196,7 +177,7 @@ export default function AIChatbot({ mode = "floating", activeRole = "landing" }:
                   <span>Online</span>
                 </span>
               </div>
-              <p className="text-[10px] text-blue-100 font-mono font-medium mt-0.5">GovLLM-v2 Model Active</p>
+              <p className="text-[10px] text-blue-100 font-mono font-medium mt-0.5">Groq Llama Model Active</p>
             </div>
           </div>
         </div>
@@ -250,24 +231,6 @@ export default function AIChatbot({ mode = "floating", activeRole = "landing" }:
             </div>
           )}
           <div ref={messagesEndRef} />
-        </div>
-
-        {/* Suggestions panel */}
-        <div className="p-3 bg-white border-t border-slate-100 shrink-0">
-          <span className="text-[9px] uppercase font-mono font-bold text-slate-400 tracking-wider mb-2 block">
-            Suggested Inquiries
-          </span>
-          <div className="flex flex-wrap gap-1.5 max-h-[85px] overflow-y-auto pr-1">
-            {STARTER_PROMPTS.map((prompt, idx) => (
-              <button
-                key={idx}
-                onClick={() => handleSendMessage(prompt.text)}
-                className="text-[10px] text-left text-[#1565C0] hover:text-[#0D47A1] bg-blue-50/60 hover:bg-blue-100/70 border border-blue-100 px-2 py-1 rounded-lg transition-colors font-medium focus:outline-none"
-              >
-                {prompt.label}
-              </button>
-            ))}
-          </div>
         </div>
 
         {/* Input Form */}
@@ -330,7 +293,7 @@ export default function AIChatbot({ mode = "floating", activeRole = "landing" }:
                     <h4 className="text-sm font-display font-bold tracking-tight block">CIVIC-AI Copilot</h4>
                     <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
                   </div>
-                  <p className="text-[10px] text-blue-100 font-mono font-medium">GovLLM-v2 Active</p>
+                  <p className="text-[10px] text-blue-100 font-mono font-medium">Groq Llama Model Active</p>
                 </div>
               </div>
               <button
@@ -391,24 +354,6 @@ export default function AIChatbot({ mode = "floating", activeRole = "landing" }:
                 </div>
               )}
               <div ref={messagesEndRef} />
-            </div>
-
-            {/* Suggestions panel */}
-            <div className="p-3 bg-white border-t border-slate-100 shrink-0">
-              <span className="text-[9px] uppercase font-mono font-bold text-slate-400 tracking-wider mb-2 block">
-                Suggested Inquiries
-              </span>
-              <div className="flex flex-wrap gap-1.5 max-h-[85px] overflow-y-auto pr-1">
-                {STARTER_PROMPTS.map((prompt, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => handleSendMessage(prompt.text)}
-                    className="text-[10px] text-left text-[#1565C0] hover:text-[#0D47A1] bg-blue-50/60 hover:bg-blue-100/70 border border-blue-100 px-2 py-1 rounded-lg transition-colors font-medium focus:outline-none"
-                  >
-                    {prompt.label}
-                  </button>
-                ))}
-              </div>
             </div>
 
             {/* Input Form */}

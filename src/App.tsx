@@ -25,6 +25,19 @@ import {
   Globe,
   Navigation
 } from "lucide-react";
+import {
+  collection,
+  onSnapshot,
+  query,
+  orderBy,
+  doc,
+  setDoc,
+  updateDoc,
+  arrayUnion,
+  writeBatch,
+  getDocs,
+} from "firebase/firestore";
+import { db } from "../firebase"; // adjust path to match your project structure
 import { Complaint, FieldWorker, Notification, Rating } from "./types";
 import {
   INITIAL_COMPLAINTS,
@@ -45,14 +58,38 @@ import OnboardingModal from "./components/OnboardingModal";
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
 
+// Firestore rejects `undefined` field values — this strips them out before every write.
+function sanitize<T>(obj: T): T {
+  return JSON.parse(JSON.stringify(obj));
+}
+
+// localStorage key used to persist the last-selected city across reloads/tab switches
+const CITY_STORAGE_KEY = "ciq_selected_city";
+
 export default function App() {
   // City and Location States
-  const [selectedCityKey, setSelectedCityKey] = useState<string>("all_india");
+  // Restored from localStorage on first load so the citizen/worker/admin views
+  // stay pinned to the same city across page refreshes instead of resetting to All India.
+  const [selectedCityKey, setSelectedCityKey] = useState<string>(() => {
+    return localStorage.getItem(CITY_STORAGE_KEY) || "all_india";
+  });
   const [isGeoLocationActive, setIsGeoLocationActive] = useState<boolean>(false);
   const [geoDenied, setGeoDenied] = useState<boolean>(false);
-  const [locationNameLabel, setLocationNameLabel] = useState<string>("All India Overview");
+  const [locationNameLabel, setLocationNameLabel] = useState<string>(() => {
+    const savedKey = localStorage.getItem(CITY_STORAGE_KEY);
+    if (savedKey && savedKey !== "all_india" && CITIES_DATA[savedKey]) {
+      return `📍 ${CITIES_DATA[savedKey].cityName}, ${CITIES_DATA[savedKey].stateName || ""}`;
+    }
+    return "All India Overview";
+  });
 
-  // Derive current city dataset
+  // Persist city selection whenever it changes, so a refresh or tab switch
+  // doesn't silently fall back to the "All India" static mock aggregate.
+  useEffect(() => {
+    localStorage.setItem(CITY_STORAGE_KEY, selectedCityKey);
+  }, [selectedCityKey]);
+
+  // Derive current city dataset (used for seeding Firestore on first run, and for all_india mock aggregate)
   const activeCityData: CityData = useMemo(() => {
     if (selectedCityKey === "all_india") {
       return getNationalAggregateData();
@@ -60,34 +97,116 @@ export default function App() {
     return CITIES_DATA[selectedCityKey] || getNationalAggregateData();
   }, [selectedCityKey]);
 
-  // Global States representing database persistence (synced to current active city)
-  const [complaints, setComplaints] = useState<Complaint[]>(activeCityData.complaints);
-  const [workers, setWorkers] = useState<FieldWorker[]>(activeCityData.workers);
-  const [notifications, setNotifications] = useState<Notification[]>(activeCityData.notifications);
+  // Global States — now backed by Firestore real-time listeners instead of localStorage
+  const [complaints, setComplaints] = useState<Complaint[]>([]);
+  const [workers, setWorkers] = useState<FieldWorker[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [isSyncing, setIsSyncing] = useState<boolean>(true);
 
-  // When city changes, update complaints, workers, and notifications smoothly
+  // ---------------------------------------------------------------------
+  // FIRESTORE REAL-TIME SYNC — re-subscribes whenever the selected city changes
+  // Collections are namespaced per city: complaints_{cityKey}, workers_{cityKey}, notifications_{cityKey}
+  // ---------------------------------------------------------------------
   useEffect(() => {
-    const savedComplaints = localStorage.getItem(`ciq_complaints_${selectedCityKey}`);
-    const savedWorkers = localStorage.getItem(`ciq_workers_${selectedCityKey}`);
-    const savedNotifs = localStorage.getItem(`ciq_notifications_${selectedCityKey}`);
+    // "All India" is a computed aggregate across all cities — kept as read-only mock data for now.
+    // Wiring this to a live cross-city Firestore aggregate would need a Cloud Function / scheduled rollup.
+    if (selectedCityKey === "all_india") {
+      const agg = getNationalAggregateData();
+      setComplaints(agg.complaints);
+      setWorkers(agg.workers);
+      setNotifications(agg.notifications);
+      setIsSyncing(false);
+      return;
+    }
 
-    setComplaints(savedComplaints ? JSON.parse(savedComplaints) : activeCityData.complaints);
-    setWorkers(savedWorkers ? JSON.parse(savedWorkers) : activeCityData.workers);
-    setNotifications(savedNotifs ? JSON.parse(savedNotifs) : activeCityData.notifications);
+    setIsSyncing(true);
+    const cityKey = selectedCityKey;
+    const complaintsColName = `complaints_${cityKey}`;
+    const workersColName = `workers_${cityKey}`;
+    const notifsColName = `notifications_${cityKey}`;
+
+    let complaintsSeeded = false;
+    let workersSeeded = false;
+    let notifsSeeded = false;
+
+    const seedIfEmpty = async (
+      colName: string,
+      seedData: any[],
+      alreadySeededFlag: () => boolean,
+      markSeeded: () => void
+    ) => {
+      if (alreadySeededFlag()) return;
+      markSeeded();
+      const existing = await getDocs(collection(db, colName));
+      if (existing.empty && seedData.length > 0) {
+        const batch = writeBatch(db);
+        seedData.forEach((item) => {
+          batch.set(doc(db, colName, item.id), sanitize(item));
+        });
+        await batch.commit();
+      }
+    };
+
+    // Seed collections with mock starter data on first-ever load for this city
+    seedIfEmpty(
+      complaintsColName,
+      activeCityData.complaints,
+      () => complaintsSeeded,
+      () => (complaintsSeeded = true)
+    );
+    seedIfEmpty(
+      workersColName,
+      activeCityData.workers,
+      () => workersSeeded,
+      () => (workersSeeded = true)
+    );
+    seedIfEmpty(
+      notifsColName,
+      activeCityData.notifications,
+      () => notifsSeeded,
+      () => (notifsSeeded = true)
+    );
+
+    // Live listeners
+    const unsubComplaints = onSnapshot(
+      query(collection(db, complaintsColName), orderBy("reportedAt", "desc")),
+      (snap) => {
+        setComplaints(snap.docs.map((d) => d.data() as Complaint));
+        setIsSyncing(false);
+      },
+      (err) => {
+        console.error("Firestore complaints listener error:", err);
+        setIsSyncing(false);
+      }
+    );
+
+    const unsubWorkers = onSnapshot(
+      collection(db, workersColName),
+      (snap) => {
+        setWorkers(snap.docs.map((d) => d.data() as FieldWorker));
+      },
+      (err) => console.error("Firestore workers listener error:", err)
+    );
+
+    const unsubNotifs = onSnapshot(
+      query(collection(db, notifsColName), orderBy("createdAt", "desc")),
+      (snap) => {
+        setNotifications(snap.docs.map((d) => d.data() as Notification));
+      },
+      (err) => console.error("Firestore notifications listener error:", err)
+    );
+
+    return () => {
+      unsubComplaints();
+      unsubWorkers();
+      unsubNotifs();
+    };
   }, [selectedCityKey, activeCityData]);
 
-  // Save to local storage per city
-  useEffect(() => {
-    localStorage.setItem(`ciq_complaints_${selectedCityKey}`, JSON.stringify(complaints));
-  }, [complaints, selectedCityKey]);
-
-  useEffect(() => {
-    localStorage.setItem(`ciq_workers_${selectedCityKey}`, JSON.stringify(workers));
-  }, [workers, selectedCityKey]);
-
-  useEffect(() => {
-    localStorage.setItem(`ciq_notifications_${selectedCityKey}`, JSON.stringify(notifications));
-  }, [notifications, selectedCityKey]);
+  // Helper: current per-city collection names for write operations
+  const complaintsCol = () => `complaints_${selectedCityKey}`;
+  const workersCol = () => `workers_${selectedCityKey}`;
+  const notifsCol = () => `notifications_${selectedCityKey}`;
 
   // Handle automatic geolocation trigger
   const handleTriggerGeoLocation = () => {
@@ -140,7 +259,6 @@ export default function App() {
   };
 
   // Current active viewport workspace
-  // "landing" | "admin" | "citizen" | "worker" | "docs"
   const [activeRole, setActiveRole] = useState<"landing" | "admin" | "citizen" | "worker" | "docs">("landing");
 
   // Localized clock state
@@ -162,27 +280,15 @@ export default function App() {
   // Selected complaint ID for the global detail sidebar overlay
   const [inspectIncidentId, setInspectIncidentId] = useState<string | null>(null);
 
-  // Admin authentication state
+  // Admin authentication state (kept in sessionStorage — this is just a UI-level auth
+  // guard flag, actual Firebase Auth token state is handled separately in AdminLogin.tsx)
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
     return sessionStorage.getItem("ciq_admin_auth") === "true";
   });
 
-  // Sync state with local storage on edits
   useEffect(() => {
     sessionStorage.setItem("ciq_admin_auth", String(isAdminAuthenticated));
   }, [isAdminAuthenticated]);
-
-  useEffect(() => {
-    localStorage.setItem("ciq_complaints", JSON.stringify(complaints));
-  }, [complaints]);
-
-  useEffect(() => {
-    localStorage.setItem("ciq_workers", JSON.stringify(workers));
-  }, [workers]);
-
-  useEffect(() => {
-    localStorage.setItem("ciq_notifications", JSON.stringify(notifications));
-  }, [notifications]);
 
   // Clock ticks
   useEffect(() => {
@@ -193,253 +299,263 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // Global Incident updates functions
-  const handleAddNewComplaint = (newComplaint: Complaint) => {
-    setComplaints((prev) => [newComplaint, ...prev]);
+  // -----------------------------------------------------------------------
+  // GLOBAL INCIDENT UPDATE FUNCTIONS — now write to Firestore.
+  // No manual setComplaints/setWorkers/setNotifications needed after writes —
+  // the onSnapshot listeners above pick up every change automatically in real time,
+  // which means Admin, Citizen, and Field Crew views all stay in sync instantly.
+  // -----------------------------------------------------------------------
 
-    // Create system notification
-    const newNotif: Notification = {
-      id: `N-CT-${Date.now()}`,
-      role: "Admin",
-      title: "New Citizen Incident Logged",
-      message: `${newComplaint.id}: '${newComplaint.title}' pre-classified at Priority ${newComplaint.aiAnalysis.priorityScore}.`,
-      createdAt: new Date().toISOString(),
-      read: false,
-    };
-    setNotifications((prev) => [newNotif, ...prev]);
+  const handleAddNewComplaint = async (newComplaint: Complaint) => {
+    try {
+      await setDoc(doc(db, complaintsCol(), newComplaint.id), sanitize(newComplaint));
+
+      const newNotif: Notification = {
+        id: `N-CT-${Date.now()}`,
+        role: "Admin",
+        title: "New Citizen Incident Logged",
+        message: `${newComplaint.id}: '${newComplaint.title}' pre-classified at Priority ${newComplaint.aiAnalysis.priorityScore}.`,
+        createdAt: new Date().toISOString(),
+        read: false,
+      };
+      await setDoc(doc(db, notifsCol(), newNotif.id), sanitize(newNotif));
+    } catch (err) {
+      console.error("Failed to submit complaint:", err);
+      alert("Could not submit your complaint. Please check your connection and try again.");
+    }
   };
 
-  const handleAssignWorker = (complaintId: string, workerId: string) => {
+  const handleAssignWorker = async (complaintId: string, workerId: string) => {
     const targetWorker = workers.find((w) => w.id === workerId);
     if (!targetWorker) return;
 
-    setComplaints((prev) =>
-      prev.map((c) => {
-        if (c.id === complaintId) {
-          return {
-            ...c,
-            status: "Assigned",
-            assignedWorkerId: workerId,
-            history: [
-              ...c.history,
-              {
-                status: "Assigned",
-                updatedAt: new Date().toISOString(),
-                comment: `Admin manually assigned work order to ${targetWorker.name} (${targetWorker.role}).`,
-                updatedBy: "Command Center Dispatcher"
-              }
-            ]
-          };
+    try {
+      await updateDoc(doc(db, complaintsCol(), complaintId), {
+        status: "Assigned",
+        assignedWorkerId: workerId,
+        history: arrayUnion({
+          status: "Assigned",
+          updatedAt: new Date().toISOString(),
+          comment: `Admin manually assigned work order to ${targetWorker.name} (${targetWorker.role}).`,
+          updatedBy: "Command Center Dispatcher"
+        })
+      });
+
+      await updateDoc(doc(db, workersCol(), workerId), { status: "On Mission" });
+
+      const newNotifs: Notification[] = [
+        {
+          id: `N-AW-${Date.now()}-1`,
+          role: "Worker",
+          title: "New Dispatch Order",
+          message: `You have been assigned to investigate and repair incident ${complaintId}.`,
+          createdAt: new Date().toISOString(),
+          read: false
+        },
+        {
+          id: `N-AW-${Date.now()}-2`,
+          role: "Admin",
+          title: "Crew Assigned to Work order",
+          message: `Technician ${targetWorker.name} has been dispatched to ${complaintId}.`,
+          createdAt: new Date().toISOString(),
+          read: false
         }
-        return c;
-      })
-    );
-
-    // Update worker status to On Mission
-    setWorkers((prev) =>
-      prev.map((w) => (w.id === workerId ? { ...w, status: "On Mission" } : w))
-    );
-
-    // Add alert notifications for Worker and Admin
-    const newNotifs: Notification[] = [
-      {
-        id: `N-AW-${Date.now()}-1`,
-        role: "Worker",
-        title: "New Dispatch Order",
-        message: `You have been assigned to investigate and repair incident ${complaintId}.`,
-        createdAt: new Date().toISOString(),
-        read: false
-      },
-      {
-        id: `N-AW-${Date.now()}-2`,
-        role: "Admin",
-        title: "Crew Assigned to Work order",
-        message: `Technician ${targetWorker.name} has been dispatched to ${complaintId}.`,
-        createdAt: new Date().toISOString(),
-        read: false
-      }
-    ];
-    setNotifications((prev) => [...newNotifs, ...prev]);
+      ];
+      await Promise.all(newNotifs.map((n) => setDoc(doc(db, notifsCol(), n.id), sanitize(n))));
+    } catch (err) {
+      console.error("Failed to assign worker:", err);
+      alert("Could not assign worker. Please try again.");
+    }
   };
 
-  const handleAcceptJob = (complaintId: string, workerId: string, workerName: string) => {
+  const handleAcceptJob = async (complaintId: string, workerId: string, workerName: string) => {
     const targetWorker = workers.find((w) => w.id === workerId) || { name: workerName || "Rahul Patil" };
 
-    setComplaints((prev) =>
-      prev.map((c) => {
-        if (c.id === complaintId) {
-          return {
-            ...c,
-            status: "Accepted",
-            assignedWorkerId: workerId,
-            assignedWorkerName: targetWorker.name,
-            etaMinutes: 12,
-            history: [
-              ...c.history,
-              {
-                status: "Accepted",
-                updatedAt: new Date().toISOString(),
-                comment: `${targetWorker.name} accepted the work order and is en route.`,
-                updatedBy: targetWorker.name
-              }
-            ]
-          };
+    try {
+      await updateDoc(doc(db, complaintsCol(), complaintId), {
+        status: "Accepted",
+        assignedWorkerId: workerId,
+        assignedWorkerName: targetWorker.name,
+        etaMinutes: 12,
+        history: arrayUnion({
+          status: "Accepted",
+          updatedAt: new Date().toISOString(),
+          comment: `${targetWorker.name} accepted the work order and is en route.`,
+          updatedBy: targetWorker.name
+        })
+      });
+
+      await updateDoc(doc(db, workersCol(), workerId), { status: "On Mission" });
+
+      const newNotifs: Notification[] = [
+        {
+          id: `N-ACC-${Date.now()}-1`,
+          role: "Citizen",
+          title: "Complaint Accepted!",
+          message: `${targetWorker.name} has accepted your complaint #${complaintId}. Technician crew is en route (ETA ~12 mins).`,
+          createdAt: new Date().toISOString(),
+          read: false
+        },
+        {
+          id: `N-ACC-${Date.now()}-2`,
+          role: "Admin",
+          title: "Work Order Accepted",
+          message: `${targetWorker.name} accepted job #${complaintId} directly from Field App queue.`,
+          createdAt: new Date().toISOString(),
+          read: false
         }
-        return c;
-      })
-    );
-
-    // Update worker status to On Mission
-    setWorkers((prev) =>
-      prev.map((w) => (w.id === workerId ? { ...w, status: "On Mission" } : w))
-    );
-
-    // Create notifications for Citizen & Admin
-    const newNotifs: Notification[] = [
-      {
-        id: `N-ACC-${Date.now()}-1`,
-        role: "Citizen",
-        title: "Complaint Accepted!",
-        message: `${targetWorker.name} has accepted your complaint #${complaintId}. Technician crew is en route (ETA ~12 mins).`,
-        createdAt: new Date().toISOString(),
-        read: false
-      },
-      {
-        id: `N-ACC-${Date.now()}-2`,
-        role: "Admin",
-        title: "Work Order Accepted",
-        message: `${targetWorker.name} accepted job #${complaintId} directly from Field App queue.`,
-        createdAt: new Date().toISOString(),
-        read: false
-      }
-    ];
-    setNotifications((prev) => [...newNotifs, ...prev]);
+      ];
+      await Promise.all(newNotifs.map((n) => setDoc(doc(db, notifsCol(), n.id), sanitize(n))));
+    } catch (err) {
+      console.error("Failed to accept job:", err);
+      alert("Could not accept the job. Please try again.");
+    }
   };
 
-  const handleWorkerUpdateStatus = (
+  const handleWorkerUpdateStatus = async (
     complaintId: string,
     status: "Accepted" | "In Progress" | "Resolved",
     comment: string,
     photo: string | null,
     completionDetails?: { beforePhoto?: string; afterPhoto?: string; voiceNote?: string }
   ) => {
-    setComplaints((prev) =>
-      prev.map((c) => {
-        if (c.id === complaintId) {
-          const finalHistoryEvent = {
-            status,
-            updatedAt: new Date().toISOString(),
-            comment,
-            updatedBy: c.assignedWorkerName || "Field Crew Dispatch"
-          };
+    const currentComplaint = complaints.find((c) => c.id === complaintId);
 
-          const beforeP = completionDetails?.beforePhoto || c.images[0];
-          const afterP = completionDetails?.afterPhoto || photo || "https://images.unsplash.com/photo-1515162305285-0293e4767cc2?w=600&auto=format&fit=crop&q=80";
-
-          return {
-            ...c,
-            status,
-            history: [...c.history, finalHistoryEvent],
-            completionProof:
-              status === "Resolved"
-                ? {
-                    photos: [afterP],
-                    beforePhoto: beforeP,
-                    afterPhoto: afterP,
-                    completedAt: new Date().toISOString(),
-                    comments: comment,
-                    voiceNote: completionDetails?.voiceNote
-                  }
-                : c.completionProof
-          };
-        }
-        return c;
-      })
-    );
-
-    // If Resolved, update worker status back to Available
-    if (status === "Resolved") {
-      const finishedComplaint = complaints.find((c) => c.id === complaintId);
-      if (finishedComplaint?.assignedWorkerId) {
-        setWorkers((prev) =>
-          prev.map((w) =>
-            w.id === finishedComplaint.assignedWorkerId ? { ...w, status: "Available" } : w
-          )
-        );
-      }
-    }
-
-    // Push notification alert
-    const newNotifs: Notification[] = [
-      {
-        id: `N-WU-${Date.now()}`,
-        role: "Admin",
-        title: status === "Resolved" ? "Work Order Completed" : "Repair Work Initiated",
-        message: `Incident ${complaintId} has been updated to ${status}. Proof of work archived in logs.`,
-        createdAt: new Date().toISOString(),
-        read: false
-      }
-    ];
-
-    if (status === "Resolved") {
-      newNotifs.push({
-        id: `N-RES-${Date.now()}`,
-        role: "Citizen",
-        title: "Work Completed!",
-        message: `Work on your complaint #${complaintId} is finished. Please rate your experience!`,
-        createdAt: new Date().toISOString(),
-        read: false
-      });
-    }
-
-    setNotifications((prev) => [...newNotifs, ...prev]);
-  };
-
-  const handleRateComplaint = (complaintId: string, rating: Rating) => {
-    setComplaints((prev) =>
-      prev.map((c) => {
-        if (c.id === complaintId) {
-          return {
-            ...c,
-            rating,
-            history: [
-              ...c.history,
-              {
-                status: c.status,
-                updatedAt: new Date().toISOString(),
-                comment: `Citizen rated response: ${rating.stars} Stars. Feedback: "${rating.comment || rating.tags?.join(", ") || "Great service"}"`,
-                updatedBy: "Citizen Portal"
-              }
-            ]
-          };
-        }
-        return c;
-      })
-    );
-
-    const newNotif: Notification = {
-      id: `N-RAT-${Date.now()}`,
-      role: "Admin",
-      title: "Citizen Feedback Received",
-      message: `Complaint #${complaintId} received a ${rating.stars}-Star rating from citizen.`,
-      createdAt: new Date().toISOString(),
-      read: false
+    const finalHistoryEvent = {
+      status,
+      updatedAt: new Date().toISOString(),
+      comment,
+      updatedBy: currentComplaint?.assignedWorkerName || "Field Crew Dispatch"
     };
-    setNotifications((prev) => [newNotif, ...prev]);
+
+    const beforeP = completionDetails?.beforePhoto || currentComplaint?.images?.[0] || null;
+    const afterP =
+      completionDetails?.afterPhoto ||
+      photo ||
+      "https://images.unsplash.com/photo-1515162305285-0293e4767cc2?w=600&auto=format&fit=crop&q=80";
+
+    try {
+      const updatePayload: any = {
+        status,
+        history: arrayUnion(finalHistoryEvent)
+      };
+
+      if (status === "Resolved") {
+        updatePayload.completionProof = sanitize({
+          photos: [afterP],
+          beforePhoto: beforeP,
+          afterPhoto: afterP,
+          completedAt: new Date().toISOString(),
+          comments: comment,
+          voiceNote: completionDetails?.voiceNote
+        });
+      }
+
+      await updateDoc(doc(db, complaintsCol(), complaintId), updatePayload);
+
+      if (status === "Resolved" && currentComplaint?.assignedWorkerId) {
+        await updateDoc(doc(db, workersCol(), currentComplaint.assignedWorkerId), {
+          status: "Available"
+        });
+      }
+
+      const newNotifs: Notification[] = [
+        {
+          id: `N-WU-${Date.now()}`,
+          role: "Admin",
+          title: status === "Resolved" ? "Work Order Completed" : "Repair Work Initiated",
+          message: `Incident ${complaintId} has been updated to ${status}. Proof of work archived in logs.`,
+          createdAt: new Date().toISOString(),
+          read: false
+        }
+      ];
+
+      if (status === "Resolved") {
+        newNotifs.push({
+          id: `N-RES-${Date.now()}`,
+          role: "Citizen",
+          title: "Work Completed!",
+          message: `Work on your complaint #${complaintId} is finished. Please rate your experience!`,
+          createdAt: new Date().toISOString(),
+          read: false
+        });
+      }
+
+      await Promise.all(newNotifs.map((n) => setDoc(doc(db, notifsCol(), n.id), sanitize(n))));
+    } catch (err) {
+      console.error("Failed to update work status:", err);
+      alert("Could not update the work order status. Please try again.");
+    }
   };
 
-  const markAllNotifsRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+  const handleRateComplaint = async (complaintId: string, rating: Rating) => {
+    try {
+      await updateDoc(doc(db, complaintsCol(), complaintId), {
+        rating: sanitize(rating),
+        history: arrayUnion({
+          status: complaints.find((c) => c.id === complaintId)?.status || "Resolved",
+          updatedAt: new Date().toISOString(),
+          comment: `Citizen rated response: ${rating.stars} Stars. Feedback: "${rating.comment || rating.tags?.join(", ") || "Great service"}"`,
+          updatedBy: "Citizen Portal"
+        })
+      });
+
+      const newNotif: Notification = {
+        id: `N-RAT-${Date.now()}`,
+        role: "Admin",
+        title: "Citizen Feedback Received",
+        message: `Complaint #${complaintId} received a ${rating.stars}-Star rating from citizen.`,
+        createdAt: new Date().toISOString(),
+        read: false
+      };
+      await setDoc(doc(db, notifsCol(), newNotif.id), sanitize(newNotif));
+    } catch (err) {
+      console.error("Failed to save rating:", err);
+      alert("Could not save your rating. Please try again.");
+    }
   };
 
-  const handleClearPersistence = () => {
-    if (window.confirm("Restore platform to default GovTech mock dataset? All custom submissions will clear.")) {
-      localStorage.removeItem("ciq_complaints");
-      localStorage.removeItem("ciq_workers");
-      localStorage.removeItem("ciq_notifications");
-      setComplaints(INITIAL_COMPLAINTS);
-      setWorkers(INITIAL_WORKERS);
-      setNotifications(INITIAL_NOTIFICATIONS);
+  const markAllNotifsRead = async () => {
+    try {
+      await Promise.all(
+        notifications
+          .filter((n) => !n.read)
+          .map((n) => updateDoc(doc(db, notifsCol(), n.id), { read: true }))
+      );
+    } catch (err) {
+      console.error("Failed to mark notifications read:", err);
+    }
+  };
+
+  const handleClearPersistence = async () => {
+    if (
+      !window.confirm(
+        "Restore platform to default GovTech mock dataset for this city? All custom submissions will be permanently deleted from Firestore."
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const batch = writeBatch(db);
+
+      const existingComplaints = await getDocs(collection(db, complaintsCol()));
+      existingComplaints.forEach((d) => batch.delete(d.ref));
+
+      const existingWorkers = await getDocs(collection(db, workersCol()));
+      existingWorkers.forEach((d) => batch.delete(d.ref));
+
+      const existingNotifs = await getDocs(collection(db, notifsCol()));
+      existingNotifs.forEach((d) => batch.delete(d.ref));
+
+      activeCityData.complaints.forEach((c) => batch.set(doc(db, complaintsCol(), c.id), sanitize(c)));
+      activeCityData.workers.forEach((w) => batch.set(doc(db, workersCol(), w.id), sanitize(w)));
+      activeCityData.notifications.forEach((n) => batch.set(doc(db, notifsCol(), n.id), sanitize(n)));
+
+      await batch.commit();
+    } catch (err) {
+      console.error("Failed to reset dataset:", err);
+      alert("Could not reset the dataset. Please try again.");
     }
   };
 

@@ -1,5 +1,28 @@
 import React, { useState } from "react";
-import { Shield, Lock, User, AlertCircle, Home, Eye, EyeOff, Key } from "lucide-react";
+import { Shield, Lock, User, AlertCircle, Home, Eye, EyeOff, UserPlus, CheckCircle2 } from "lucide-react";
+import { initializeApp, getApps, getApp } from "firebase/app";
+import { getAuth, signInWithEmailAndPassword, signOut } from "firebase/auth";
+import { getFirestore, doc, getDoc } from "firebase/firestore";
+
+// ==== Firebase config ====
+// Get these from Firebase Console > Project Settings > General > Your apps > Web app.
+// You haven't registered a web app yet (Console shows "There are no apps in your
+// project") — do that first, then paste the config object it gives you here.
+const firebaseConfig = {
+  apiKey: "AIzaSyAQi4BK3fD8UecPDl4lY3SUUVFc99WOya8",
+  authDomain: "civic-iq.firebaseapp.com",
+  projectId: "civic-iq",
+  storageBucket: "civic-iq.firebasestorage.app",
+  messagingSenderId: "816058667104",
+  appId: "1:816058667104:web:808b3581625e874644b305",
+  measurementId: "G-217GEWCYRT"
+};
+
+
+// avoids "Firebase app already initialized" if this file re-renders/hot-reloads
+const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
 
 interface AdminLoginProps {
   onLoginSuccess: () => void;
@@ -7,38 +30,63 @@ interface AdminLoginProps {
 }
 
 export default function AdminLogin({ onLoginSuccess, onBackToHome }: AdminLoginProps) {
-  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
+    const trimmedEmail = email.trim();
+    const trimmedPassword = password.trim();
+
+    if (!trimmedEmail || !trimmedPassword) {
+      setError("AUTHENTICATION FAILED: Credentials cannot be empty.");
+      return;
+    }
+
     setIsVerifying(true);
+    try {
+      // real Firebase Auth check — no hardcoded credentials
+      const cred = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
 
-    // Simulate safe identity verification delay
-    setTimeout(() => {
-      // Allow lowercase/trimmed variations for smooth UX
-      const u = username.trim().toLowerCase();
-      const p = password.trim();
+      // Firestore role check — the users/{uid} doc must have role: "admin".
+      // NOTE: admin accounts aren't self-signup. Create them manually for now:
+      // 1. Firebase Console > Authentication > Add user (email + password)
+      // 2. Firestore > users collection > new doc, doc ID = that user's UID,
+      //    fields: { name, email, role: "admin", createdAt }
+      const userDoc = await getDoc(doc(db, "users", cred.user.uid));
 
-      if (u === "admin" && p === "admin123") {
+      if (userDoc.exists() && userDoc.data()?.role === "admin") {
         onLoginSuccess();
-      } else if (!u || !p) {
-        setError("AUTHENTICATION FAILED: Credentials cannot be empty.");
       } else {
-        setError("ACCESS DENIED: Invalid Employee ID or passcode credentials.");
+        await signOut(auth); // don't leave a signed-in session for a non-admin
+        setError("ACCESS DENIED: This account does not have administrator access.");
       }
+    } catch (err: any) {
+      if (
+        err.code === "auth/invalid-credential" ||
+        err.code === "auth/user-not-found" ||
+        err.code === "auth/wrong-password"
+      ) {
+        setError("ACCESS DENIED: Invalid email or password.");
+      } else if (err.code === "auth/invalid-api-key" || err.code === "auth/api-key-not-valid.-please-pass-a-valid-api-key.") {
+        setError("CONFIG ERROR: Firebase isn't set up yet — register a web app in the Firebase Console first.");
+      } else {
+        setError(`AUTHENTICATION ERROR: ${err.message || "Service unavailable."}`);
+      }
+    } finally {
       setIsVerifying(false);
-    }, 850);
+    }
   };
 
   return (
     <div className="flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8 bg-[#F5F7FA]">
       <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-2xl border border-slate-200 shadow-xl transition-all duration-300">
-        
+
         {/* Header Branding & Security Icon */}
         <div className="text-center space-y-3">
           <div className="inline-flex p-4 bg-blue-50 text-[#1565C0] rounded-full ring-8 ring-blue-50/50">
@@ -68,8 +116,7 @@ export default function AdminLogin({ onLoginSuccess, onBackToHome }: AdminLoginP
 
         {/* Login Form */}
         <form className="mt-8 space-y-5" onSubmit={handleSubmit}>
-          
-          {/* Error Message Box */}
+
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-xs font-mono font-medium flex items-center gap-2 animate-shake">
               <AlertCircle className="h-4.5 w-4.5 text-red-500 shrink-0" />
@@ -77,20 +124,20 @@ export default function AdminLogin({ onLoginSuccess, onBackToHome }: AdminLoginP
             </div>
           )}
 
-          {/* Username Input */}
+          {/* Email Input */}
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-slate-700 tracking-wide uppercase font-mono block">
-              Officer Username
+              Officer Email
             </label>
             <div className="relative">
               <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
                 <User className="h-4 w-4" />
               </span>
               <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="e.g., admin"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="officer@bmc.gov.in"
                 className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-[#1565C0] focus:bg-white rounded-xl text-xs text-slate-800 font-medium placeholder-slate-400 outline-none transition-all"
               />
             </div>
@@ -122,18 +169,6 @@ export default function AdminLogin({ onLoginSuccess, onBackToHome }: AdminLoginP
               >
                 {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
-            </div>
-          </div>
-
-          {/* Sandbox Credentials Prompt Block */}
-          <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-3 text-xs text-slate-600 space-y-1">
-            <span className="font-mono font-bold text-[10px] text-slate-500 uppercase flex items-center gap-1">
-              <Key className="h-3 w-3 text-slate-400" />
-              <span>Demo Login Credentials</span>
-            </span>
-            <div className="flex gap-4 text-[11px] font-mono">
-              <div>Username: <span className="text-slate-900 font-bold bg-white px-1.5 py-0.5 rounded border border-slate-200">admin</span></div>
-              <div>Password: <span className="text-slate-900 font-bold bg-white px-1.5 py-0.5 rounded border border-slate-200">admin123</span></div>
             </div>
           </div>
 

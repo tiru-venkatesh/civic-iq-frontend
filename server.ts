@@ -5,7 +5,7 @@
 
 import express from "express";
 import path from "path";
-import { GoogleGenAI } from "@google/genai";
+import Groq from "groq-sdk";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -16,15 +16,13 @@ const PORT = 3000;
 // Middleware for parsing JSON bodies
 app.use(express.json());
 
-// Initialize the GoogleGenAI SDK with the API key and custom user-agent for telemetry.
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      "User-Agent": "aistudio-build",
-    },
-  },
+// Initialize the Groq SDK with the API key.
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
 });
+
+// Groq model to use for chat completions.
+const GROQ_MODEL = "llama-3.3-70b-versatile";
 
 // System Instructions for the general platform helper
 const CIVIC_AI_SYSTEM_INSTRUCTION = `
@@ -91,34 +89,35 @@ app.post("/api/chat", async (req, res) => {
       ? CIVIC_INTELLIGENCE_SYSTEM_INSTRUCTION
       : CIVIC_AI_SYSTEM_INSTRUCTION;
 
-    // Map history to the required format for Gemini if provided
-    const contents: any[] = [];
+    // Map history + current message to Groq's OpenAI-style chat message format.
+    const messages: Groq.Chat.Completions.ChatCompletionMessageParam[] = [
+      { role: "system", content: systemInstruction },
+    ];
+
     if (history && Array.isArray(history)) {
       history.forEach((turn: { role: string; content: string }) => {
-        contents.push({
-          role: turn.role === "assistant" ? "model" : "user",
-          parts: [{ text: turn.content }],
+        messages.push({
+          role: turn.role === "assistant" ? "assistant" : "user",
+          content: turn.content,
         });
       });
     }
-    contents.push({
-      role: "user",
-      parts: [{ text: message }],
+
+    messages.push({ role: "user", content: message });
+
+    const completion = await groq.chat.completions.create({
+      model: GROQ_MODEL,
+      messages,
+      temperature: 0.7,
     });
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents,
-      config: {
-        systemInstruction: systemInstruction,
-        temperature: 0.7,
-      },
-    });
+    const reply =
+      completion.choices[0]?.message?.content ||
+      "I apologize, but I am unable to generate a response at this moment.";
 
-    const reply = response.text || "I apologize, but I am unable to generate a response at this moment.";
     res.json({ reply });
   } catch (error: any) {
-    console.error("Gemini API Error in server.ts:", error);
+    console.error("Groq API Error in server.ts:", error);
     res.status(500).json({
       error: "An error occurred while communicating with the AI service. Please verify your API key configuration.",
       details: error.message,

@@ -2,8 +2,17 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
+  updateProfile,
+} from "firebase/auth";
+import { doc, setDoc, updateDoc, getDoc, serverTimestamp } from "firebase/firestore";
+import { storage, auth, db } from "../../firebase"; // adjust path to match your project structure
 import InfoTooltip from "./InfoTooltip";
 import {
   MapPin,
@@ -183,7 +192,7 @@ const LOCAL_UPDATES = [
 
 interface CitizenAppProps {
   complaints: Complaint[];
-  onSubmitComplaint: (newComplaint: Complaint) => void;
+  onSubmitComplaint: (newComplaint: Complaint) => void | Promise<void>;
   onViewComplaintDetails: (id: string) => void;
   onRateComplaint?: (complaintId: string, rating: any) => void;
 }
@@ -202,8 +211,193 @@ export default function CitizenApp({
   // Multi-step submission wizard: Step 1 (Category), Step 2 (Photo & AI), Step 3 (Voice & Text), Step 4 (Map), Step 5 (Review)
   const [submitStep, setSubmitStep] = useState<1 | 2 | 3 | 4 | 5>(1);
 
-  // User auth state
-  const [user, setUser] = useState<{ name: string; email: string } | null>({ name: "Sarah Jenkins", email: "sarah@mumbai.gov.in" });
+  // Ref for the internal scrollable screen container (see useEffect below).
+  const screenContainerRef = useRef<HTMLDivElement>(null);
+
+  // Reset internal scroll position to top every time the active screen changes,
+  // so switching from a scrolled-down step (e.g. Review) to Confirm/Home
+  // doesn't retain the old scroll offset and jump jarringly.
+  useEffect(() => {
+    if (screenContainerRef.current) {
+      screenContainerRef.current.scrollTop = 0;
+    }
+  }, [screen]);
+
+  // ===== REAL FIREBASE AUTH STATE =====
+  // user holds the live Firebase Auth user (+ Firestore profile fields merged in)
+  const [user, setUser] = useState<{ uid: string; name: string; email: string; photoURL: string | null } | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+
+  // Login/signup form state
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [authName, setAuthName] = useState("");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
+
+  // Profile photo upload state
+  const [isUploadingProfilePhoto, setIsUploadingProfilePhoto] = useState(false);
+  const profilePhotoInputRef = useRef<HTMLInputElement>(null);
+
+  // Listen for Firebase Auth state on mount. If already logged in, skip splash/login.
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      if (fbUser) {
+        let photoURL = fbUser.photoURL || null;
+        let name = fbUser.displayName || "Citizen";
+        try {
+          const userDocSnap = await getDoc(doc(db, "users", fbUser.uid));
+          if (userDocSnap.exists()) {
+            const data = userDocSnap.data();
+            photoURL = data.photoURL ?? photoURL;
+            name = data.name ?? name;
+          }
+        } catch (err) {
+          console.error("Failed to load user profile doc:", err);
+        }
+        setUser({ uid: fbUser.uid, name, email: fbUser.email || "", photoURL });
+        setScreen((prev) => (prev === "splash" || prev === "login" ? "home" : prev));
+      } else {
+        setUser(null);
+      }
+      setAuthChecked(true);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const resetAuthForm = () => {
+    setAuthError(null);
+    setAuthName("");
+    setAuthEmail("");
+    setAuthPassword("");
+  };
+
+  const mapAuthError = (code?: string): string => {
+    switch (code) {
+      case "auth/email-already-in-use":
+        return "This email is already registered. Try logging in instead.";
+      case "auth/invalid-email":
+        return "Please enter a valid email address.";
+      case "auth/weak-password":
+        return "Password is too weak (min 6 characters).";
+      case "auth/user-not-found":
+      case "auth/wrong-password":
+      case "auth/invalid-credential":
+        return "Invalid email or password.";
+      case "auth/too-many-requests":
+        return "Too many attempts. Please try again later.";
+      default:
+        return "Something went wrong. Please try again.";
+    }
+  };
+
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+
+    if (authMode === "signup" && !authName.trim()) {
+      setAuthError("Please enter your name.");
+      return;
+    }
+    if (authPassword.length < 6) {
+      setAuthError("Password must be at least 6 characters.");
+      return;
+    }
+
+    setAuthLoading(true);
+    try {
+      if (authMode === "signup") {
+        const cred = await createUserWithEmailAndPassword(auth, authEmail, authPassword);
+        await updateProfile(cred.user, { displayName: authName });
+        await setDoc(doc(db, "users", cred.user.uid), {
+          uid: cred.user.uid,
+          name: authName,
+          email: authEmail,
+          role: "citizen",
+          photoURL: null,
+          createdAt: serverTimestamp(),
+        });
+        setUser({ uid: cred.user.uid, name: authName, email: authEmail, photoURL: null });
+      } else {
+        const cred = await signInWithEmailAndPassword(auth, authEmail, authPassword);
+        let photoURL: string | null = cred.user.photoURL || null;
+        let name = cred.user.displayName || "Citizen";
+        const userDocSnap = await getDoc(doc(db, "users", cred.user.uid));
+        if (userDocSnap.exists()) {
+          const data = userDocSnap.data();
+          photoURL = data.photoURL ?? photoURL;
+          name = data.name ?? name;
+        }
+        setUser({ uid: cred.user.uid, name, email: cred.user.email || "", photoURL });
+      }
+      resetAuthForm();
+      setScreen("home");
+    } catch (err: any) {
+      setAuthError(mapAuthError(err?.code));
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.error("Sign out failed:", err);
+    } finally {
+      setUser(null);
+      resetAuthForm();
+      setScreen("login");
+    }
+  };
+
+  // Profile photo upload -> Firebase Storage, then Firestore users/{uid}.photoURL + Auth profile update
+  const handleProfilePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    if (!file.type.startsWith("image/")) {
+      alert("Please select an image file.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Image must be smaller than 5MB.");
+      return;
+    }
+
+    // Instant local preview
+    const localPreviewUrl = URL.createObjectURL(file);
+    setUser((prev) => (prev ? { ...prev, photoURL: localPreviewUrl } : prev));
+
+    setIsUploadingProfilePhoto(true);
+    try {
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const storagePath = `profile_photos/${user.uid}/${Date.now()}_${safeName}`;
+      const storageRef = ref(storage, storagePath);
+      const uploadTask = uploadBytesResumable(storageRef, file);
+
+      await new Promise<void>((resolve, reject) => {
+        uploadTask.on("state_changed", undefined, reject, () => resolve());
+      });
+
+      const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+
+      await updateDoc(doc(db, "users", user.uid), { photoURL: downloadURL });
+      if (auth.currentUser) {
+        await updateProfile(auth.currentUser, { photoURL: downloadURL });
+      }
+
+      setUser((prev) => (prev ? { ...prev, photoURL: downloadURL } : prev));
+    } catch (err) {
+      console.error("Profile photo upload failed:", err);
+      alert("Profile photo upload failed. Please try again.");
+      setUser((prev) => (prev ? { ...prev, photoURL: prev.photoURL } : prev));
+    } finally {
+      setIsUploadingProfilePhoto(false);
+      if (profilePhotoInputRef.current) profilePhotoInputRef.current.value = "";
+    }
+  };
 
   // Voice recording mock state
   const [isRecording, setIsRecording] = useState(false);
@@ -224,8 +418,9 @@ export default function CitizenApp({
   const [addressText, setAddressText] = useState("SV Road, near Andheri West Station, Mumbai, MH 400053");
   const [customPhotoUrl, setCustomPhotoUrl] = useState("");
   const [voiceTranscript, setVoiceTranscript] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Simulated Circular Upload Progress Engine
+  // Simulated Circular Upload Progress Engine — only used for the sample-photo quick-pick flow
   const startPhotoUploadSimulation = () => {
     setIsUploadingPhoto(true);
     setUploadProgress(0);
@@ -243,15 +438,16 @@ export default function CitizenApp({
     }, 90);
   };
 
-  // Custom File Upload Handler
+  // Real custom file upload — uploads to Firebase Storage with live progress, then swaps in the download URL
   const handleCustomFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const fileUrl = URL.createObjectURL(file);
-    const customPhoto = {
+    // Show local preview immediately (instant feedback) while the real upload runs in the background
+    const localPreviewUrl = URL.createObjectURL(file);
+    const draftPhoto = {
       name: file.name,
-      url: fileUrl,
+      url: localPreviewUrl,
       category: selectedCategoryObj.category,
       severity: "High",
       classification: `${selectedCategoryObj.name} Hazard`,
@@ -263,11 +459,37 @@ export default function CitizenApp({
       dept: "BMC Municipal Infrastructure"
     };
 
-    setSelectedPhoto(customPhoto);
+    setSelectedPhoto(draftPhoto);
     setReportTitle(`${selectedCategoryObj.name} - ${file.name.substring(0, 18)}`);
     setReportDesc(`Citizen uploaded high-res photo (${file.name}). Location tag: SV Road corridor. Immediate inspection requested.`);
-    startPhotoUploadSimulation();
-    triggerAIEvaluation(selectedCategoryObj.name, `Uploaded photo ${file.name}`, customPhoto);
+    triggerAIEvaluation(selectedCategoryObj.name, `Uploaded photo ${file.name}`, draftPhoto);
+
+    // Real upload to Firebase Storage with live progress
+    setIsUploadingPhoto(true);
+    setUploadProgress(0);
+
+    const storagePath = `complaint-photos/${Date.now()}-${file.name}`;
+    const storageRef = ref(storage, storagePath);
+    const uploadTask = uploadBytesResumable(storageRef, file);
+
+    uploadTask.on(
+      "state_changed",
+      (snapshot) => {
+        const pct = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+        setUploadProgress(pct);
+      },
+      (error) => {
+        console.error("Photo upload failed:", error);
+        setIsUploadingPhoto(false);
+        alert("Photo upload failed. Please check your connection and try again.");
+      },
+      async () => {
+        const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+        setSelectedPhoto((prev) => (prev ? { ...prev, url: downloadUrl } : prev));
+        setUploadProgress(100);
+        setIsUploadingPhoto(false);
+      }
+    );
   };
 
   // AI evaluation state
@@ -382,67 +604,79 @@ export default function CitizenApp({
     triggerAIEvaluation(p.name, `${p.name} reported`, p);
   };
 
-  // Submit complete complaint
-  const handleFormSubmit = () => {
-    const finalLat = gpsLocation?.lat || 19.1136;
-    const finalLng = gpsLocation?.lng || 72.8697;
-    const finalAddress = addressText || "SV Road, Ward K-West, Mumbai 400053";
+  // Submit complete complaint — writes go through onSubmitComplaint (Firestore-backed in App.tsx)
+  const handleFormSubmit = async () => {
+    if (isSubmitting) return; // guard against double-tap while a Firestore write is in flight
+    setIsSubmitting(true);
 
-    const finalAnalysis: AIAnalysis = aiAnalysisPreview || {
-      classification: `${selectedCategoryObj.name} Incident`,
-      category: selectedCategoryObj.category,
-      confidence: 0.92,
-      reasoning: "AI prioritized report based on citizen photo analysis and ward traffic metrics.",
-      severity: "High",
-      populationAffected: 500,
-      delayImpactScore: 60,
-      budgetRequired: 2200,
-      timeToRepairHours: 4,
-      priorityScore: 80,
-      isDuplicate: false,
-      duplicateGroup: null
-    };
+    try {
+      const finalLat = gpsLocation?.lat || 19.1136;
+      const finalLng = gpsLocation?.lng || 72.8697;
+      const finalAddress = addressText || "SV Road, Ward K-West, Mumbai 400053";
 
-    const newTicketId = `CIQ-2026-${Math.floor(Math.random() * 9000) + 1000}`;
+      const finalAnalysis: AIAnalysis = aiAnalysisPreview || {
+        classification: `${selectedCategoryObj.name} Incident`,
+        category: selectedCategoryObj.category,
+        confidence: 0.92,
+        reasoning: "AI prioritized report based on citizen photo analysis and ward traffic metrics.",
+        severity: "High",
+        populationAffected: 500,
+        delayImpactScore: 60,
+        budgetRequired: 2200,
+        timeToRepairHours: 4,
+        priorityScore: 80,
+        isDuplicate: false,
+        duplicateGroup: null
+      };
 
-    const newComplaint: Complaint = {
-      id: newTicketId,
-      title: reportTitle || `${selectedCategoryObj.name} Report`,
-      description: reportDesc || "Citizen reported issue via mobile assistant.",
-      category: selectedCategoryObj.category,
-      status: "Pending",
-      latitude: finalLat,
-      longitude: finalLng,
-      address: finalAddress,
-      reportedBy: user?.name || "Sarah Jenkins",
-      reportedAt: new Date().toISOString(),
-      images: selectedPhoto ? [selectedPhoto.url] : [customPhotoUrl || "https://images.unsplash.com/photo-1515162305285-0293e4767cc2?w=600&auto=format&fit=crop&q=80"],
-      voiceTranscript,
-      aiAnalysis: finalAnalysis,
-      assignedWorkerId: null,
-      history: [
-        {
-          status: "Pending",
-          updatedAt: new Date().toISOString(),
-          comment: "Complaint submitted successfully. AI assigned initial Priority Score.",
-          updatedBy: "System"
-        }
-      ],
-      completionProof: null
-    };
+      const newTicketId = `CIQ-2026-${Math.floor(Math.random() * 9000) + 1000}`;
 
-    onSubmitComplaint(newComplaint);
-    setLastSubmittedComplaint(newComplaint);
-    setScreen("confirm");
+      const newComplaint: Complaint = {
+        id: newTicketId,
+        title: reportTitle || `${selectedCategoryObj.name} Report`,
+        description: reportDesc || "Citizen reported issue via mobile assistant.",
+        category: selectedCategoryObj.category,
+        status: "Pending",
+        latitude: finalLat,
+        longitude: finalLng,
+        address: finalAddress,
+        reportedBy: user?.name || "Citizen",
+        reportedAt: new Date().toISOString(),
+        images: selectedPhoto
+          ? [selectedPhoto.url]
+          : [customPhotoUrl || "https://images.unsplash.com/photo-1515162305285-0293e4767cc2?w=600&auto=format&fit=crop&q=80"],
+        voiceTranscript,
+        aiAnalysis: finalAnalysis,
+        assignedWorkerId: null,
+        history: [
+          {
+            status: "Pending",
+            updatedAt: new Date().toISOString(),
+            comment: "Complaint submitted successfully. AI assigned initial Priority Score.",
+            updatedBy: "System"
+          }
+        ],
+        completionProof: null
+      };
 
-    // Reset wizard
-    setSubmitStep(1);
-    setReportTitle("");
-    setReportDesc("");
-    setSelectedPhoto(null);
-    setCustomPhotoUrl("");
-    setVoiceTranscript(null);
-    setAiAnalysisPreview(null);
+      await onSubmitComplaint(newComplaint);
+      setLastSubmittedComplaint(newComplaint);
+      setScreen("confirm");
+
+      // Reset wizard
+      setSubmitStep(1);
+      setReportTitle("");
+      setReportDesc("");
+      setSelectedPhoto(null);
+      setCustomPhotoUrl("");
+      setVoiceTranscript(null);
+      setAiAnalysisPreview(null);
+    } catch (err) {
+      console.error("Complaint submission failed:", err);
+      alert("Something went wrong submitting your report. Please check your connection and try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Open complaint tracking timeline view
@@ -451,11 +685,20 @@ export default function CitizenApp({
     setScreen("tracking");
   };
 
+  // Helper: citizen's initials for avatar fallback
+  const userInitials = (user?.name || "Citizen")
+    .split(" ")
+    .map((p) => p[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+
   return (
     <div className="w-full bg-slate-100 rounded-2xl border border-slate-200 shadow-lg overflow-hidden flex flex-col font-sans min-h-[720px] max-w-md mx-auto">
       
       {/* Container Body */}
-      <div className="flex-1 overflow-y-auto bg-slate-50 relative flex flex-col">
+      <div ref={screenContainerRef} className="flex-1 overflow-y-auto bg-slate-50 relative flex flex-col">
           
           {/* ==================== SCREEN 1: SPLASH ==================== */}
           {screen === "splash" && (
@@ -485,7 +728,7 @@ export default function CitizenApp({
                   Report potholes, water leaks, or garbage in 30 seconds.
                 </p>
                 <button
-                  onClick={() => setScreen("home")}
+                  onClick={() => setScreen(user ? "home" : "login")}
                   className="w-full py-3.5 bg-white hover:bg-slate-50 text-gov-blue text-sm font-bold rounded-2xl transition-all shadow-xl flex items-center justify-center gap-2 cursor-pointer active:scale-98"
                 >
                   <span>Start Reporting</span>
@@ -498,7 +741,7 @@ export default function CitizenApp({
             </div>
           )}
 
-          {/* ==================== SCREEN 2: LOGIN ==================== */}
+          {/* ==================== SCREEN 2: LOGIN / SIGNUP (Real Firebase Auth) ==================== */}
           {screen === "login" && (
             <div className="flex-1 flex flex-col p-6 justify-between bg-white">
               <div className="space-y-6">
@@ -507,34 +750,82 @@ export default function CitizenApp({
                 </button>
                 
                 <div>
-                  <h2 className="text-2xl font-display font-bold text-slate-900">Sign In to Civic-IQ</h2>
-                  <p className="text-xs text-slate-500 mt-1">Sign in to report and track issues in your neighborhood.</p>
+                  <h2 className="text-2xl font-display font-bold text-slate-900">
+                    {authMode === "login" ? "Sign In to Civic-IQ" : "Create your Civic-IQ account"}
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {authMode === "login"
+                      ? "Sign in to report and track issues in your neighborhood."
+                      : "Sign up to start reporting issues in your neighborhood."}
+                  </p>
                 </div>
 
-                <form className="space-y-4 text-xs" onSubmit={(e) => { e.preventDefault(); setUser({ name: "Sarah Jenkins", email: "sarah@mumbai.gov.in" }); setScreen("home"); }}>
+                <form className="space-y-4 text-xs" onSubmit={handleAuthSubmit}>
+                  {authMode === "signup" && (
+                    <div className="space-y-1.5">
+                      <label className="font-semibold text-slate-700 block">Full Name</label>
+                      <input
+                        type="text"
+                        value={authName}
+                        onChange={(e) => setAuthName(e.target.value)}
+                        className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl font-medium focus:border-gov-blue focus:bg-white text-sm"
+                        placeholder="Your name"
+                        required
+                      />
+                    </div>
+                  )}
+
                   <div className="space-y-1.5">
-                    <label className="font-semibold text-slate-700 block">Mobile Number or Email</label>
+                    <label className="font-semibold text-slate-700 block">Email</label>
                     <input
-                      type="text"
-                      defaultValue="9820012345"
+                      type="email"
+                      value={authEmail}
+                      onChange={(e) => setAuthEmail(e.target.value)}
                       className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl font-medium focus:border-gov-blue focus:bg-white text-sm"
+                      placeholder="you@example.com"
                       required
                     />
                   </div>
 
+                  <div className="space-y-1.5">
+                    <label className="font-semibold text-slate-700 block">Password</label>
+                    <input
+                      type="password"
+                      value={authPassword}
+                      onChange={(e) => setAuthPassword(e.target.value)}
+                      className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl font-medium focus:border-gov-blue focus:bg-white text-sm"
+                      placeholder="••••••••"
+                      required
+                      minLength={6}
+                    />
+                  </div>
+
+                  {authError && (
+                    <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                      {authError}
+                    </p>
+                  )}
+
                   <button
                     type="submit"
-                    className="w-full py-3.5 bg-gov-blue hover:bg-gov-blue-hover text-white font-bold text-sm rounded-xl transition-all shadow-md cursor-pointer"
+                    disabled={authLoading}
+                    className="w-full py-3.5 bg-gov-blue hover:bg-gov-blue-hover disabled:opacity-60 text-white font-bold text-sm rounded-xl transition-all shadow-md cursor-pointer flex items-center justify-center gap-2"
                   >
-                    Continue
+                    {authLoading && (
+                      <span className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    )}
+                    <span>{authMode === "login" ? "Sign In" : "Sign Up"}</span>
                   </button>
                 </form>
 
                 <button
-                  onClick={() => { setUser({ name: "Citizen User", email: "citizen@mumbai.gov.in" }); setScreen("home"); }}
+                  onClick={() => {
+                    setAuthMode(authMode === "login" ? "signup" : "login");
+                    setAuthError(null);
+                  }}
                   className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs cursor-pointer"
                 >
-                  Skip Login (Use Guest Mode)
+                  {authMode === "login" ? "New here? Create an account" : "Already have an account? Sign in"}
                 </button>
               </div>
             </div>
@@ -546,14 +837,18 @@ export default function CitizenApp({
               {/* Home Header */}
               <div className="bg-white p-4 border-b border-slate-200 sticky top-0 z-20 flex items-center justify-between shadow-2xs">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-gov-blue text-white font-bold flex items-center justify-center text-sm shadow-sm border border-blue-200">
-                    SJ
+                  <div className="w-10 h-10 rounded-full bg-gov-blue text-white font-bold flex items-center justify-center text-sm shadow-sm border border-blue-200 overflow-hidden">
+                    {user?.photoURL ? (
+                      <img src={user.photoURL} alt={user.name} className="w-full h-full object-cover" />
+                    ) : (
+                      userInitials
+                    )}
                   </div>
                   <div>
                     <div className="text-xs text-slate-500 font-medium flex items-center gap-1">
                       <span>👋 Welcome</span>
                     </div>
-                    <span className="text-sm font-bold text-slate-900 leading-tight block">{user?.name || "Sarah Jenkins"}</span>
+                    <span className="text-sm font-bold text-slate-900 leading-tight block">{user?.name || "Citizen"}</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
@@ -1359,10 +1654,20 @@ export default function CitizenApp({
                   <button
                     type="button"
                     onClick={handleFormSubmit}
-                    className="flex-1 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                    disabled={isSubmitting}
+                    className="flex-1 py-3.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 disabled:cursor-not-allowed text-white font-bold text-sm rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer active:scale-98"
                   >
-                    <CheckCircle className="h-5 w-5" />
-                    <span>Submit Report</span>
+                    {isSubmitting ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        <span>Submitting...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle className="h-5 w-5" />
+                        <span>Submit Report</span>
+                      </>
+                    )}
                   </button>
                 )}
               </div>
@@ -1816,14 +2121,49 @@ export default function CitizenApp({
                 <h3 className="text-sm font-bold text-slate-900">Citizen Profile</h3>
               </div>
 
+              {/* Hidden file input for profile photo upload */}
+              <input
+                type="file"
+                ref={profilePhotoInputRef}
+                accept="image/*"
+                className="hidden"
+                onChange={handleProfilePhotoChange}
+              />
+
               <div className="text-center p-5 border border-slate-200 rounded-2xl bg-slate-50 space-y-2">
-                <div className="w-16 h-16 rounded-full bg-gov-blue text-white font-bold text-xl flex items-center justify-center mx-auto border-2 border-white shadow-md">
-                  SJ
+                <div className="relative w-16 h-16 mx-auto">
+                  <div className="w-16 h-16 rounded-full bg-gov-blue text-white font-bold text-xl flex items-center justify-center border-2 border-white shadow-md overflow-hidden">
+                    {user?.photoURL ? (
+                      <img src={user.photoURL} alt={user.name} className="w-full h-full object-cover" />
+                    ) : (
+                      userInitials
+                    )}
+                  </div>
+                  {isUploadingProfilePhoto && (
+                    <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center">
+                      <span className="h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => profilePhotoInputRef.current?.click()}
+                    className="absolute -bottom-1 -right-1 p-1.5 bg-gov-blue text-white rounded-full border-2 border-white shadow-md hover:bg-gov-blue-hover cursor-pointer"
+                    title="Change profile photo"
+                  >
+                    <Camera className="h-3 w-3" />
+                  </button>
                 </div>
                 <div>
-                  <h4 className="font-bold text-base text-slate-900">Sarah Jenkins</h4>
-                  <span className="text-xs text-slate-500">Ward K-West, Andheri West, Mumbai</span>
+                  <h4 className="font-bold text-base text-slate-900">{user?.name || "Citizen"}</h4>
+                  <span className="text-xs text-slate-500">{user?.email || "Ward K-West, Andheri West, Mumbai"}</span>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => profilePhotoInputRef.current?.click()}
+                  className="text-xs text-gov-blue font-bold cursor-pointer hover:underline"
+                >
+                  {user?.photoURL ? "Change photo" : "Upload profile photo"}
+                </button>
               </div>
 
               <div className="space-y-2 text-xs text-slate-700">
@@ -1842,7 +2182,7 @@ export default function CitizenApp({
               </div>
 
               <button
-                onClick={() => setScreen("login")}
+                onClick={handleSignOut}
                 className="w-full py-3 border border-red-200 hover:bg-red-50 text-red-600 font-bold rounded-xl text-xs mt-auto cursor-pointer"
               >
                 Sign Out
