@@ -33,7 +33,6 @@ import {
 import { Complaint, FieldWorker, SmartCityBudget } from "../types";
 import { CityData } from "../data/cityData";
 import SmartCityMap from "./SmartCityMap";
-import WeatherImpactMonitor, { WeatherData } from "./WeatherImpactMonitor";
 
 interface AdminDashboardProps {
   complaints: Complaint[];
@@ -82,83 +81,32 @@ export default function AdminDashboard({
   // PDF Download simulation state
   const [downloadingPDF, setDownloadingPDF] = useState(false);
 
-  // Weather states
-  const [weatherData, setWeatherData] = useState<WeatherData>({
-    temp: 20.0,
-    condition: "Clear Weather",
-    rain: 0,
-    windSpeed: 10,
-    humidity: 50,
-    severity: "Low"
-  });
-  const [weatherOverride, setWeatherOverride] = useState<string>("None");
+  // Base complaint list (weather monitor removed, so this is just the raw list —
+  // kept as its own variable so downstream calculations don't need renaming)
+  const adjustedComplaints = complaints;
 
-  const activeCondition = weatherOverride !== "None" ? weatherOverride : weatherData.condition;
-  
-  let weatherImpact = 0;
-  let weatherReason = "Clear weather conditions. Standard priority matrix applied.";
+  // Weather Impact Monitor was removed, so there is no live weather escalation
+  // signal anymore. Kept at 0 so any complaint.weatherAdjusted data set upstream
+  // (e.g. from the AI analysis pipeline) still renders correctly in the table
+  // and detail panel without this dashboard trying to compute its own delta.
+  const weatherImpact = 0;
 
-  if (activeCondition === "Flood Warning") {
-    weatherImpact = 40;
-    weatherReason = "Flood warning active. Sub-surface water logging threatens electrical systems and asphalt base layers. AI automatically escalated the incident.";
-  } else if (activeCondition === "Thunderstorm") {
-    weatherImpact = 30;
-    weatherReason = "Severe thunderstorm detected. High likelihood of immediate electrical discharge hazards and signal control failures. AI automatically escalated the incident.";
-  } else if (activeCondition === "Heavy Rain") {
-    weatherImpact = 20;
-    weatherReason = "Heavy rainfall increases the probability of road collapse and waterlogging. AI automatically escalated the incident.";
-  } else if (activeCondition.includes("Strong Wind") || weatherData.windSpeed > 40) {
-    weatherImpact = 15;
-    weatherReason = "Strong wind velocities exceeding 40 km/h risk downing overhead street cables and road signs. AI automatically escalated the incident.";
-  } else if (activeCondition.includes("Heatwave") || weatherData.temp > 40) {
-    weatherImpact = 10;
-    weatherReason = "Dangerous heatwave conditions (>40°C) cause asphalt softening and increase risk of electrical transformer overheating. AI automatically escalated the incident.";
-  }
+  // Currently selected incident for the Explainable AI side panel
+  const selectedIncident = complaints.find((c) => c.id === selectedIncidentId) || null;
 
-  // Create adjusted complaints with weather influence
-  const adjustedComplaints = complaints.map(c => {
-    if (c.status === "Resolved") {
-      return {
-        ...c,
-        weatherAdjusted: {
-          originalPriority: c.aiAnalysis.priorityScore,
-          impact: 0,
-          finalPriority: c.aiAnalysis.priorityScore,
-          reasoning: "Complaint resolved and archived. No active weather adjustments applied.",
-          hasChanged: false
-        }
-      };
-    }
-
-    const finalPriority = Math.min(100, c.aiAnalysis.priorityScore + weatherImpact);
-    return {
-      ...c,
-      aiAnalysis: {
-        ...c.aiAnalysis,
-        priorityScore: finalPriority
-      },
-      weatherAdjusted: {
-        originalPriority: c.aiAnalysis.priorityScore,
-        impact: weatherImpact,
-        finalPriority,
-        reasoning: weatherReason,
-        hasChanged: weatherImpact > 0
-      }
-    };
-  });
-
-  const selectedIncident = adjustedComplaints.find((c) => c.id === selectedIncidentId);
-
-  // Filtered complaints list (ignoring duplicates in the main ranking table for cleaner presentation, although they can be shown)
-  const filteredComplaints = adjustedComplaints.filter((c) => {
-    const matchesSearch =
-      c.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.address.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = categoryFilter === "All" || c.category === categoryFilter;
-    const matchesSeverity = severityFilter === "All" || c.aiAnalysis.severity === severityFilter;
-    return matchesSearch && matchesCategory && matchesSeverity;
-  });
+  // Filtered + priority-sorted list for the main table
+  const filteredComplaints = adjustedComplaints
+    .filter((c) => {
+      const q = searchQuery.trim().toLowerCase();
+      const matchesSearch =
+        q === "" ||
+        c.title.toLowerCase().includes(q) ||
+        c.id.toLowerCase().includes(q);
+      const matchesCategory = categoryFilter === "All" || c.category === categoryFilter;
+      const matchesSeverity = severityFilter === "All" || c.aiAnalysis.severity === severityFilter;
+      return matchesSearch && matchesCategory && matchesSeverity;
+    })
+    .sort((a, b) => b.aiAnalysis.priorityScore - a.aiAnalysis.priorityScore);
 
   // KPI Calculations
   const totalReports = adjustedComplaints.length;
@@ -329,18 +277,6 @@ export default function AdminDashboard({
               </div>
             </div>
           </div>
-
-          {/* Environmental Command: Weather Impact Monitor */}
-          <WeatherImpactMonitor
-            onWeatherChange={(data, override) => {
-              setWeatherData(data);
-              setWeatherOverride(override);
-            }}
-            affectedIncidentsCount={affectedIncidentsCount}
-            avgPriorityIncrease={avgPriorityIncrease}
-            highestAdjustedIncident={highestAdjustedIncident}
-            onInspectIncident={(id) => setSelectedIncidentId(id)}
-          />
 
           {/* Interactive GIS Command Map Section with toggles */}
           <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden p-4 space-y-4">
