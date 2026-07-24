@@ -24,7 +24,6 @@ import {
   Check
 } from "lucide-react";
 import { Notification } from "../types";
-import logo from "../assets/1.jpg"; // add this line
 import { CITIES_DATA } from "../data/cityData";
 
 interface NavbarProps {
